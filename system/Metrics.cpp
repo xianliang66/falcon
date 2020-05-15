@@ -171,7 +171,10 @@ namespace Grappa {
       MetricList all;
       merge(all); // also flushes histogram logs
 
-      std::ofstream of( FLAGS_stats_blob_filename.c_str(), std::ios::out );
+      std::ofstream of( "stat.json", std::ios::out );
+      if (!of) {
+        return;
+      }
       print(of, all, "");
     }
     
@@ -180,7 +183,10 @@ namespace Grappa {
         MetricList all;
         merge(all); // also flushes histogram logs
 
-        std::ofstream o( FLAGS_stats_blob_filename.c_str(), std::ios::out );
+        std::ofstream o( "stat.json", std::ios::out );
+        if (!o) {
+          return;
+        }
         print( o, all, "");
       }
     }
