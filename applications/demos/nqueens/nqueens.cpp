@@ -71,6 +71,7 @@ private:
   
 public:
   Board(size_t size) { init(size); }
+  Board() { }
 
   /* Creates a new board, copies the content of 'source' and
    * insert 'newItem' into the last column.
@@ -78,16 +79,15 @@ public:
   Board(GlobalAddress<Board> source, int newItem)
   {
     /* read the remote board size */
-    int remsize = delegate::call(source, [](Board &b) { return b.size; });
+    //int remsize = delegate::call(source, [](Board &b) { return b.size; });
+    int remsize = delegate::read(source).size;
 
    /* Add an extra column. */
     init(remsize+1);
 
     /* copy the contents of the remote board to the local one */
     for (auto k=0; k<remsize; k++)
-      columns[k] = delegate::call(source, [k](Board &b) {
-            return b.columns[k];
-          });
+      columns[k] = delegate::read(source).columns[k];
     
     /* Insert the new item */
     columns[size-1] = newItem;

@@ -1,54 +1,41 @@
-////////////////////////////////////////////////////////////////////////
-// Copyright (c) 2010-2015, University of Washington and Battelle
-// Memorial Institute.  All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions
-// are met:
-//     * Redistributions of source code must retain the above
-//       copyright notice, this list of conditions and the following
-//       disclaimer.
-//     * Redistributions in binary form must reproduce the above
-//       copyright notice, this list of conditions and the following
-//       disclaimer in the documentation and/or other materials
-//       provided with the distribution.
-//     * Neither the name of the University of Washington, Battelle
-//       Memorial Institute, or the names of their contributors may be
-//       used to endorse or promote products derived from this
-//       software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-// FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-// UNIVERSITY OF WASHINGTON OR BATTELLE MEMORIAL INSTITUTE BE LIABLE
-// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
-// OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
-// BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
-// USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
-// DAMAGE.
-////////////////////////////////////////////////////////////////////////
-
 #include <Grappa.hpp>
-using namespace Grappa;
 
-int main( int argc, char * argv[] ) {
+using namespace Grappa;
+using namespace std;
+
+#define myassert(expr) \
+      if (!(expr)) \
+        std::cout << __FILE__ << ":" << __LINE__ << " aborted.\n";
+
+static void test_0(GlobalAddress<int>& array) {
+  LOG(INFO) << "test_0";
+  delegate::write(array, 4);
+  delegate::write(array+1, 5);
+}
+
+static void test_1(GlobalAddress<int>& array) {
+  LOG(INFO) << "test_1";
+  while (delegate::read(array+1) != 5)
+    Grappa::yield();
+  myassert(delegate::read(array) == 4);
+}
+
+int main(int argc, char * argv[]) {
   init( &argc, &argv );
-  
   run([]{
-    
-    on_all_cores([]{
-      
-      LOG(INFO) << "Hello world from locale " << mylocale() << " core " << mycore() << " hostname " << hostname();
-      
+    //Metrics::reset_all_cores();
+    //Metrics::start_tracing();
+
+    GlobalAddress< int > array = global_alloc<int>(5);
+    on_all_cores([&array]{
+        switch (mycore()) {
+        case 0: test_0(array); break;
+        case 1: test_1(array); break;
+        }
     });
-    
+
+    //Metrics::merge_and_dump_to_file();
+
   });
-  
   finalize();
-  
-  return 0;
 }

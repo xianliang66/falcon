@@ -101,7 +101,7 @@ struct HashJoinContext {
             for (auto right_it = rightGroup.begin(); right_it!=rightGroup.end(); ++right_it) {
               for (auto left_it = leftGroup.begin(); left_it!=leftGroup.end(); ++left_it) {
                 join_coarse_result_count++;
-                reducer.result->push_back( combine<OutType,VL,VR>(*left_it,*right_it) );
+                reducer.result->push_back( std::locale::combine<OutType,VL,VR>(*left_it,*right_it) );
               }
             }
           }

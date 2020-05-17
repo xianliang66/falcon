@@ -100,3 +100,11 @@ routing.dot
 *.sqlite
 .RData
 
+# Ctags
+tags
+
+# Cscope
+cscope.*
+
+# Scripts
+*.sh

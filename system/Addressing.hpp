@@ -54,6 +54,7 @@
 /// incrementing by blocks work.
 
 #include "Communicator.hpp"
+#include "TardisCache.hpp"
 
 typedef int Pool;
 
@@ -106,8 +107,20 @@ static const intptr_t pointer_mask = (1L << pointer_bits) - 1;
 /// 2D addresses are a PGAS-style tuple of ( core, address on core )
 ///
 /// Linear addresses are block cyclic across all the cores in the system.
+
 template< typename T >
 class GlobalAddress {
+#ifdef GRAPPA_TARDIS_CACHE
+  static std::map<GlobalAddress,Grappa::impl::cache_info> cache;
+public:
+  static Grappa::impl::cache_info& find_cache( const GlobalAddress<T>& g ) {
+    auto it = cache.find(g);
+    if (it == cache.end()) {
+      cache[g] = Grappa::impl::cache_info();
+    }
+    return cache[g];
+  }
+#endif
 private:
 
   /// Storage for address
@@ -210,6 +223,13 @@ public:
       return core;
     }
   }
+
+  /// Return whether the current core is owner.
+#ifdef GRAPPA_TARDIS_CACHE
+  inline bool is_owner() const {
+    return core() == Grappa::mycore();
+  }
+#endif
   
   /// Return the home core of a global address
   /// TODO: implement this.
@@ -391,6 +411,10 @@ public:
 
 };
 
+#ifdef GRAPPA_TARDIS_CACHE
+template<typename T> std::map<GlobalAddress<T>, Grappa::impl::cache_info>
+  GlobalAddress<T>::cache;
+#endif
 
 /// return an address that's i T's more than t.
 template< typename T >

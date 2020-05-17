@@ -91,6 +91,9 @@ Communicator::Communicator( )
   , locales_( -1 )
   , locale_cores_( -1 )
   , locale_of_core_()
+#ifdef GRAPPA_TARDIS_CACHE
+  , pts( 0 )
+#endif
 
   , receives()
   , receive_head(0)

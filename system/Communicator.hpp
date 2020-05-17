@@ -38,7 +38,7 @@
 /// Definition of Grappa communication layer wrapper class.  This
 /// class' functionality is implemented using the GASNet library.
 ///
-/// There are three phases in this class' lifetime. 
+/// There are three phases in this class' lifetime.
 ///
 /// -# after the constructor call, before the init call. No method
 /// calls are allowed at this point.
@@ -59,6 +59,7 @@
 #include <glog/logging.h>
 
 #include "common.hpp"
+#include "TardisCache.hpp"
 //#include "Metrics.hpp"
 
 //#include "PerformanceTools.hpp"
@@ -74,7 +75,7 @@
 // GRAPPA_DECLARE_METRIC( SimpleMetric<uint64_t>, communicator_messages);
 // GRAPPA_DECLARE_METRIC( SimpleMetric<uint64_t>, communicator_bytes);
 
-/// Type for Core and Locale IDs. 
+/// Type for Core and Locale IDs.
 typedef int16_t Core;
 typedef int16_t Locale;
 
@@ -125,7 +126,7 @@ private:
   Core locales_;
   Core locale_mycore_;
   Core locale_cores_;
-  
+
   /// array of core-to-locale translations
   std::unique_ptr< Locale[] > locale_of_core_;
 
@@ -146,13 +147,13 @@ private:
   int send_mask;
 
   MPI_Request barrier_request;
-  
+
   void process_received_buffers();
   void process_collectives();
 
   std::deque<CommunicatorContext*> external_sends;
   CommunicatorContext * collective_context;
-  
+
 public:
   MPI_Comm locale_comm; // locale-local communicator
   MPI_Comm grappa_comm; // grappa-specific communicator
@@ -170,21 +171,24 @@ public:
   /// @param target  memory footprint (in bytes) that this should try to fit in
   /// @return actual size estimate (may be larger than target)
   size_t adjust_footprint(size_t target);
-  
+
   /// Estimate amount of memory the communicator will use when 'activate()' is called
   size_t estimate_footprint() const;
-  
+
   /// Begin setting up communicator.
   void init( int * argc_p, char ** argv_p[] );
 
   /// Finish setting up communicator. After this, all communicator
   /// methods can be called.
   void activate();
-  
+
   /// Tear down communicator.
   void finish( int retval = 0 );
 
   /// Public versions of job geometry
+#ifdef GRAPPA_TARDIS_CACHE
+  timestamp_t pts;
+#endif
   const Core & mycore;
   const Core & cores;
   const Core & mylocale;
@@ -193,7 +197,7 @@ public:
   const Core & locale_cores;
 
   /// What locale is responsible for this core?
-  inline Locale locale_of( Core c ) const { 
+  inline Locale locale_of( Core c ) const {
     return locale_of_core_[c];
   }
 
@@ -207,14 +211,14 @@ public:
                   int dest,
                   size_t size,
                   int tag = 1 );
-  
+
   void post_external_send( CommunicatorContext * c,
                            int dest,
                            size_t size,
                            int tag = 1 );
-  
+
   void post_receive( CommunicatorContext * c );
-  
+
 
   template< typename F >
   void send_immediate( int dest, F f ) {
@@ -222,7 +226,7 @@ public:
     while( NULL == (c = try_get_send_context()) ) {
       garbage_collect();
     }
-          
+
     DVLOG(3) << "Sending immediate " << &f << " to " << dest << " with " << c;
     c->callback = NULL;
     char * buf = (char*) c->buf;
@@ -234,10 +238,10 @@ public:
 
     *((void**)buf) = (void*) Grappa::impl::immediate_deserializer<F>;
     buf += sizeof(Grappa::impl::Deserializer);
-    
+
     memcpy( buf, &f, sizeof(f) );
     buf += sizeof(f);
-    
+
     post_send( c, dest, (buf - ((char*) c->buf)) );
   }
 
@@ -247,7 +251,7 @@ public:
     while( NULL == (c = try_get_send_context()) ) {
       garbage_collect();
     }
-          
+
     DVLOG(3) << "Sending immediate " << &f << " to " << dest << " with " << c;
     c->callback = NULL;
     char * buf = (char*) c->buf;
@@ -260,24 +264,24 @@ public:
 
     *((void**)buf) = (void*) Grappa::impl::immediate_deserializer_with_payload<F>;
     buf += sizeof(Grappa::impl::Deserializer);
-    
+
     memcpy( buf, &f, sizeof(f) );
     buf += sizeof(f);
 
     memcpy( buf, payload, payload_size );
     buf += payload_size;
-    
+
     post_send( c, dest, (buf - ((char*) c->buf)) );
   }
 
   void poll( unsigned int max_receives = 0 );
-  
+
   template< typename F >
   void with_request_do_blocking( F f );
 
-  
-  
-  
+
+
+
   /// Global (anonymous) barrier (ALLNODES)
   inline void barrier() {
     MPI_CHECK( MPI_Barrier( grappa_comm ) );
@@ -292,7 +296,7 @@ public:
   inline void barrier_notify() {
     MPI_CHECK( MPI_Ibarrier( grappa_comm, &barrier_request ) );
   }
-  
+
   /// Global (anonymous) two-phase barrier try (ALLNODES)
   inline bool barrier_try() {
     int flag;
@@ -308,6 +312,11 @@ namespace Grappa {
 
 /// @addtogroup Communication
 /// @{
+
+#ifdef GRAPPA_TARDIS_CACHE
+/// pts of this core
+inline timestamp_t & mypts() { return global_communicator.pts; }
+#endif
 
 /// How many cores are there in this job?
 inline const Core cores() { return global_communicator.cores; }

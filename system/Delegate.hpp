@@ -41,6 +41,8 @@
 #include "DelegateBase.hpp"
 #include "GlobalCompletionEvent.hpp"
 #include "AsyncDelegate.hpp"
+#include "TardisCache.hpp"
+#include "Communicator.hpp"
 #include <type_traits>
 
 GRAPPA_DECLARE_METRIC(SummarizingMetric<uint64_t>, flat_combiner_fetch_and_add_amount);
@@ -57,9 +59,9 @@ GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_fetchadd_targets);
 namespace Grappa {
     /// @addtogroup Delegates
     /// @{
-    
+
   namespace impl {
-            
+
     template< SyncMode S, GlobalCompletionEvent * C, typename F >
     struct Specializer {
       // async call with void return type
@@ -67,7 +69,7 @@ namespace Grappa {
         delegate_ops++;
         delegate_async_ops++;
         Core origin = Grappa::mycore();
-      
+
         if (dest == origin) {
           // short-circuit if local
           delegate_targets++;
@@ -87,37 +89,54 @@ namespace Grappa {
           });
         }
       }
-      
+
       // async call with return val (via Promise)
       template< typename T >
       static delegate::Promise<T> call(Core dest, F f, T (F::*mf)() const) {
         static_assert(std::is_same<void,T>::value, "not implemented yet");
         // return std::move(Promise<T>(f()));
       }
-      
+
     };
-    
+
     template< GlobalCompletionEvent * C, typename F >
     struct Specializer<SyncMode::Blocking,C,F> {
       template< typename T >
       static auto call(Core dest, F f, T (F::*mf)() const) -> T {
         return impl::call(dest, f, mf); // defined in DelegateBase.hpp
       }
-    };    
-    
+    };
+
   } // namespace impl
-  
+
   namespace delegate {
-    
+
+#ifdef GRAPPA_TARDIS_CACHE
+    enum CacheState { Hit, Expired, Miss };
+
+    template <typename T>
+    CacheState try_read_cache(const GlobalAddress<T>& t) {
+      cache_info& mycache = GlobalAddress<T>::find_cache(t);
+      if (!mycache.valid) {
+        return CacheState::Miss;
+      }
+      if (Grappa::mypts() > mycache.rts) {
+        mycache.valid = false;
+        return CacheState::Expired;
+      }
+      return CacheState::Hit;
+    }
+#endif // GRAPPA_TARDIS_CACHE
+
 #define AUTO_INVOKE(expr) decltype(expr) { return expr; }
-        
-    template< SyncMode S = SyncMode::Blocking, 
+
+    template< SyncMode S = SyncMode::Blocking,
               GlobalCompletionEvent * C = &impl::local_gce,
               typename F = decltype(nullptr) >
     auto call(Core dest, F f) -> AUTO_INVOKE((impl::Specializer<S,C,F>::call(dest, f, &F::operator())));
-        
+
   } // namespace delegate
-    
+
   namespace impl {
     template< SyncMode S, GlobalCompletionEvent * C, typename T, typename R, typename F >
     inline auto call(GlobalAddress<T> t, F func, R (F::*mf)(T&) const) -> decltype(func(*t.pointer())) {
@@ -131,9 +150,9 @@ namespace Grappa {
 
   namespace delegate {
 
-    /// Helper that makes it easier to implement custom delegate operations 
+    /// Helper that makes it easier to implement custom delegate operations
     /// specifically on global addresses.
-    /// 
+    ///
     /// Does specialization based on return type of the lambda.
     ///
     /// Example:
@@ -150,16 +169,16 @@ namespace Grappa {
               typename F = decltype(nullptr) >
     inline auto call(GlobalAddress<T> t, F func) ->
       AUTO_INVOKE((impl::call<S,C>(t,func,&F::operator())));
-    
+
 #undef AUTO_INVOKE
-    
+
     /// Try lock on remote mutex. Does \b not lock or unlock, creates a SuspendedDelegate if lock has already
     /// been taken, which is triggered on unlocking of the Mutex.
     template< typename M, typename F >
     inline auto call(Core dest, M mutex, F func) -> decltype(func(mutex())) {
-      using R = decltype(func(mutex()));      
+      using R = decltype(func(mutex()));
       delegate_ops++;
-      
+
       if (dest == mycore()) {
         delegate_targets++;
         delegate_short_circuits++;
@@ -176,7 +195,7 @@ namespace Grappa {
             result_addr->writeXF(val);
           });
         };
-      
+
         send_message(dest, [set_result,mutex,func] {
           delegate_targets++;
           auto l = mutex();
@@ -195,20 +214,20 @@ namespace Grappa {
         return r;
       }
     }
-    
-    /// Alternative version of delegate::call that spawns a privateTask to allow the delegate 
+
+    /// Alternative version of delegate::call that spawns a privateTask to allow the delegate
     /// to perform suspending actions.
-    /// 
+    ///
     /// @note Use of this is not advised: suspending violates much of the assumptions about
-    /// delegates we usually make, and can easily cause deadlock if no workers are available 
-    /// to execute the spawned privateTask. A better option for possibly-blocking delegates 
+    /// delegates we usually make, and can easily cause deadlock if no workers are available
+    /// to execute the spawned privateTask. A better option for possibly-blocking delegates
     /// is to use the Mutex version of delegate::call(Core,M,F).
     template <typename F>
     inline auto call_suspendable(Core dest, F func) -> decltype(func()) {
       delegate_ops++;
       using R = decltype(func());
       Core origin = Grappa::mycore();
-    
+
       if (dest == origin) {
         delegate_targets++;
         delegate_short_circuits++;
@@ -217,10 +236,10 @@ namespace Grappa {
         FullEmpty<R> result;
         int64_t network_time = 0;
         int64_t start_time = Grappa::timestamp();
-      
+
         send_message(dest, [&result, origin, func, &network_time, start_time] {
           delegate_targets++;
-          
+
           spawn([&result, origin, func, &network_time, start_time] {
             R val = func();
             // TODO: replace with handler-safe send_message
@@ -237,50 +256,98 @@ namespace Grappa {
         return r;
       }
     }
-    
+
     /// Read the value (potentially remote) at the given GlobalAddress, blocks the calling task until
     /// round-trip communication is complete.
     /// @warning Target object must lie on a single node (not span blocks in global address space).
-    template< SyncMode S = SyncMode::Blocking, 
+    template< SyncMode S = SyncMode::Blocking,
               GlobalCompletionEvent * C = &impl::local_gce,
               typename T = decltype(nullptr) >
     T read(GlobalAddress<T> target) {
       delegate_reads++;
+
+#ifdef GRAPPA_TARDIS_CACHE
+      if (try_read_cache(target) == CacheState::Hit) {
+        return *target.pointer();
+      }
+      impl::cache_info& mycache = GlobalAddress<T>::find_cache(target);
+      timestamp_t pts = Grappa::mypts();
+      auto r = call<S,C>(target.core(), [target,mycache,pts]() {
+        delegate_read_targets++;
+
+        impl::cache_info& target_cache = GlobalAddress<T>::find_cache(target);
+        target_cache.rts = std::max<timestamp_t>(std::max<timestamp_t>(
+              target_cache.rts, target_cache.wts + LEASE), (pts + LEASE));
+        return impl::cache_result<T>(*target.pointer(), target_cache);
+      });
+      mycache.rts = r.cache.rts;
+      mycache.wts = r.cache.wts;
+      Grappa::mypts() = std::max<timestamp_t>(Grappa::mypts(), r.cache.wts);
+      *target.pointer() = r.r;
+      mycache.valid = true;
+      LOG(INFO) << "read " << r.r << " mycore " << mycore() << " " << mycache.wts << " " << mycache.rts << " pts " << mypts() << (target.is_owner() ? " owner" : " non-owner");
+      return r.r;
+#else
       return call<S,C>(target.core(), [target]() -> T {
         delegate_read_targets++;
         return *target.pointer();
       });
+#endif
     }
-    
-    
+
     /// Remove 'const' qualifier to do read.
-    template< SyncMode S = SyncMode::Blocking, 
+    template< SyncMode S = SyncMode::Blocking,
               GlobalCompletionEvent * C = &impl::local_gce,
               typename T = decltype(nullptr) >
     T read(GlobalAddress<const T> target) {
       return read<S,C>(static_cast<GlobalAddress<T>>(target));
     }
-        
+
     /// Blocking remote write.
     /// @warning Target object must lie on a single node (not span blocks in global address space).
-    template< SyncMode S = SyncMode::Blocking, 
+    template< SyncMode S = SyncMode::Blocking,
               GlobalCompletionEvent * C = &impl::local_gce,
               typename T = decltype(nullptr),
               typename U = decltype(nullptr) >
     void write(GlobalAddress<T> target, U value) {
       static_assert(std::is_convertible<T,U>(), "type of value must match GlobalAddress type");
       delegate_writes++;
-      // TODO: don't return any val, requires changes to `delegate::call()`.
-      return call<S,C>(target.core(), [target, value] {
-        delegate_write_targets++;
+#ifdef GRAPPA_TARDIS_CACHE
+      cache_info& mycache = GlobalAddress<T>::find_cache(target);
+      if (target.is_owner()) {
+        timestamp_t ts = std::max<timestamp_t>(mypts(), mycache.rts + 1);
+        mypts() = mycache.rts = mycache.wts = ts;
+      }
+      else {
+        // TODO: don't return any val, requires changes to `delegate::call()`.
+        mycache = call<S,C>(target.core(), [target, value] {
+          delegate_write_targets++;
+
+          cache_info& target_cache = GlobalAddress<T>::find_cache(target);
+          timestamp_t ts = std::max<timestamp_t>(mypts(), target_cache.rts + 1);
+          mypts() = target_cache.wts = ts;
+          target_cache.rts = ts + LEASE;
+          *target.pointer() = value;
+          return target_cache;
+        });
+        mypts() = mycache.wts = std::max<timestamp_t>(mypts(), mycache.wts);
+      }
+      /// Update my own cache or owner storage.
+      *target.pointer() = value;
+      mycache.valid = true;
+      LOG(INFO) << "write " << value << " mycore " << mycore() << " " << mycache.wts << " " << mycache.rts << " pts " << mypts() << (target.is_owner() ? " owner" : " non-owner");
+#else
+      return call<S,C>(target.core(), [target, value]() -> T {
+        delegate_read_targets++;
         *target.pointer() = value;
       });
+#endif
     }
-    
+
     /// Fetch the value at `target`, increment the value stored there with `inc` and return the
     /// original value to blocking thread.
     /// @warning Target object must lie on a single node (not span blocks in global address space).
-    template< SyncMode S = SyncMode::Blocking, 
+    template< SyncMode S = SyncMode::Blocking,
               GlobalCompletionEvent * C = &impl::local_gce,
               typename T = decltype(nullptr),
               typename U = decltype(nullptr) >
@@ -305,8 +372,8 @@ namespace Grappa {
         const GlobalAddress<T> target;
         const U initVal;
         const uint64_t flush_threshold;
-       
-        // state 
+
+        // state
         T result;
         U increment;
         uint64_t committed;
@@ -316,7 +383,7 @@ namespace Grappa {
         ConditionVariable untilNotOutstanding;
         ConditionVariable untilReceived;
 
-        // wait until fetch add unit is in aggregate mode 
+        // wait until fetch add unit is in aggregate mode
         // TODO: add concurrency (multiple fetch add units)
         void block_until_ready() {
           while ( outstanding ) {
@@ -330,13 +397,13 @@ namespace Grappa {
           outstanding = false;
           Grappa::broadcast(&untilNotOutstanding);
         }
-         
+
         void set_not_ready() {
           outstanding = true;
         }
 
       public:
-        FetchAddCombiner( GlobalAddress<T> target, uint64_t flush_threshold, U initVal ) 
+        FetchAddCombiner( GlobalAddress<T> target, uint64_t flush_threshold, U initVal )
          : target( target )
          , initVal( initVal )
          , flush_threshold( flush_threshold )
@@ -352,7 +419,7 @@ namespace Grappa {
 
         /// Promise that in the future
         /// you will call `fetch_and_add`.
-        /// 
+        ///
         /// Must be called before a call to `fetch_and_add`
         ///
         /// After calling promise, this task must NOT have a dependence on any
@@ -375,9 +442,9 @@ namespace Grappa {
           participant_count++;
           committed--;
           increment += inc;
-        
+
           // if I'm the last entered client and either the flush threshold
-          // is reached or there are no more committed participants then start the flush 
+          // is reached or there are no more committed participants then start the flush
           if ( ready_waiters == 0 && (participant_count >= flush_threshold || committed == 0 )) {
             set_not_ready();
             uint64_t increment_total = increment;
@@ -409,11 +476,11 @@ namespace Grappa {
         }
     };
 
-    
+
     /// If value at `target` equals `cmp_val`, set the value to `new_val` and return `true`,
     /// otherwise do nothing and return `false`.
     /// @warning Target object must lie on a single node (not span blocks in global address space).
-    template< SyncMode S = SyncMode::Blocking, 
+    template< SyncMode S = SyncMode::Blocking,
               GlobalCompletionEvent * C = &impl::local_gce,
               typename T = decltype(nullptr),
               typename U = decltype(nullptr),
@@ -421,7 +488,7 @@ namespace Grappa {
     bool compare_and_swap(GlobalAddress<T> target, U cmp_val, V new_val) {
       static_assert(std::is_convertible<T,U>(), "type of cmp_val must match GlobalAddress type");
       static_assert(std::is_convertible<T,V>(), "type of new_val must match GlobalAddress type");
-      
+
       delegate_cmpswaps++;
       return call(target.core(), [target, cmp_val, new_val]() -> bool {
         T * p = target.pointer();
@@ -434,8 +501,8 @@ namespace Grappa {
         }
       });
     }
-    
-    template< SyncMode S = SyncMode::Blocking, 
+
+    template< SyncMode S = SyncMode::Blocking,
               GlobalCompletionEvent * C = &impl::local_gce,
               typename T = decltype(nullptr),
               typename U = decltype(nullptr) >
@@ -446,11 +513,11 @@ namespace Grappa {
         (*target.pointer()) += inc;
       });
     }
-    
+
   } // namespace delegate
-  
+
   /// Synchronizing remote private task spawn. Automatically enrolls task with GlobalCompletionEvent and
-  /// sends `complete`  message when done (if C is non-null).  
+  /// sends `complete`  message when done (if C is non-null).
   template< TaskMode B = TaskMode::Bound,
             GlobalCompletionEvent * C = &impl::local_gce,
             typename F = decltype(nullptr) >
@@ -464,7 +531,7 @@ namespace Grappa {
       });
     });
   }
-  
+
   // overload to specify just the GCE
   template< GlobalCompletionEvent * C,
             TaskMode B = TaskMode::Bound,
@@ -472,7 +539,7 @@ namespace Grappa {
   void spawnRemote(Core dest, F f) {
     spawnRemote<B, C, F>( dest, f );
   }
-    
+
 } // namespace Grappa
 /// @}
 
