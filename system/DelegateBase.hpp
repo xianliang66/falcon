@@ -38,6 +38,7 @@
 #include "Addressing.hpp"
 #include "FullEmptyLocal.hpp"
 #include "Metrics.hpp"
+#include <assert.h>
 
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_short_circuits);
 

@@ -108,20 +108,26 @@ static const intptr_t pointer_mask = (1L << pointer_bits) - 1;
 ///
 /// Linear addresses are block cyclic across all the cores in the system.
 
+void invalidate_core( Core dest );
+void write_core();
+
 template< typename T >
 class GlobalAddress {
 #ifdef GRAPPA_TARDIS_CACHE
-  static std::map<GlobalAddress,Grappa::impl::cache_info> cache;
 public:
   static Grappa::impl::cache_info& find_cache( const GlobalAddress<T>& g ) {
-    auto it = cache.find(g);
+    extern std::map<void*,Grappa::impl::cache_info> cache;
+
+    void *rawptr = (void *)g.pointer();
+    auto it = cache.find(rawptr);
     if (it == cache.end()) {
-      cache[g] = Grappa::impl::cache_info();
+      cache[rawptr] = Grappa::impl::cache_info();
+      cache[rawptr].core = g.core();
     }
-    return cache[g];
+    return cache[rawptr];
   }
-#endif
 private:
+#endif
 
   /// Storage for address
   intptr_t storage_;
@@ -410,11 +416,6 @@ public:
   }
 
 };
-
-#ifdef GRAPPA_TARDIS_CACHE
-template<typename T> std::map<GlobalAddress<T>, Grappa::impl::cache_info>
-  GlobalAddress<T>::cache;
-#endif
 
 /// return an address that's i T's more than t.
 template< typename T >

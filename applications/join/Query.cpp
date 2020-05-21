@@ -128,7 +128,7 @@ int main(int argc, char** argv) {
   
     end = Grappa::walltime();
     query_runtime = end - start;
-    Grappa::Metrics::merge_and_print();
+    Metrics::merge_and_dump_to_file();
   });
   Grappa::finalize();
 }

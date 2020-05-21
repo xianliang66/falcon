@@ -62,3 +62,8 @@ GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_cmpswaps, 0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_cmpswap_targets, 0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_fetchadds, 0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_fetchadd_targets, 0);
+GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_cache_hit, 0);
+GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_cache_miss, 0);
+GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_cache_expired, 0);
+GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_call_all, 0);
+GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_call_one, 0);

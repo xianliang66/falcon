@@ -60,6 +60,7 @@ int find_iso_paths(GlobalAddress<Graph<VertexP>> g, int64_t node, std::stack<int
 
   //if the pattern size is zero, something went wrong so abort
   if (pattern.size() == 0) {
+    LOG(ERROR) << "Some thing went wrong\n";
     return 0;
   }
   int64_t color = pattern.top(); //get the next color in the pattern sequence
@@ -340,7 +341,10 @@ int main(int argc, char** argv) {
   Grappa::init(&argc, &argv);
 
   Grappa::run([]{
+      Metrics::reset_all_cores();
+      Metrics::start_tracing();
       user_main();
+      Metrics::merge_and_dump_to_file();
     });
   Grappa::finalize();
   
