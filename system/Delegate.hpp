@@ -449,7 +449,7 @@ namespace Grappa {
           Grappa::mypts() = target_cache.wts = target_cache.rts = ts;
           *target.pointer() = value;
           if (Grappa::mypts() != pts) {
-            LOG(INFO) << "pts " << pts << "=>" << Grappa::mypts();
+            //LOG(INFO) << "pts " << pts << "=>" << Grappa::mypts();
           }
           return ts;
         });
