@@ -119,17 +119,17 @@ static void test_5_8(GlobalAddress<int>& array) {
   }
 }
 
-static void test_9(GlobalAddress<int>& array) {
+static void test_9(GlobalAddress<int> array) {
   delegate::write(array+5, 1);
 }
 
-static void test_10(GlobalAddress<int>& array) {
+static void test_10(GlobalAddress<int> array) {
   if (delegate::read(array+5) == 1) {
     delegate::write(array+6, 1);
   };
 }
 
-static void test_11(GlobalAddress<int>& array) {
+static void test_11(GlobalAddress<int> array) {
   int r = delegate::read(array+6);
   delegate::write(array+7, r);
   if (r == 1) {
@@ -140,7 +140,7 @@ static void test_11(GlobalAddress<int>& array) {
 static void test_9_11(GlobalAddress<int>& array) {
   int r2, r3;
   for (int i = 0; i < 500000; i++) {
-    on_all_cores([&array, &r2, &r3]{
+    on_all_cores([array, &r2, &r3]{
         switch (mycore()) {
         case 0:  test_9(array); break;
         case 1:  test_10(array); break;
@@ -149,6 +149,7 @@ static void test_9_11(GlobalAddress<int>& array) {
     });
     r2 = delegate::read(array+7);
     r3 = delegate::read(array+8);
+    LOG(ERROR) << r2 << r3;
     if (((r2 == 0 && r3 == 1) ||
          (r2 == 0 && r3 == 1))) {
       LOG(ERROR) << "ERROR: r2=" << r2 << " r3=" << r3;

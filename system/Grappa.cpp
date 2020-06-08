@@ -270,6 +270,7 @@ static void failure_sighandler( int signum, siginfo_t * si, void * unused ) {
       freeze_for_debugger();
   }
   std::cerr << "Exiting due to signal " << signum << " with siginfo " << si << " and payload " << unused << std::endl;
+  google::DumpStackTrace();
   _exit(1);
 }
 

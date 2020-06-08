@@ -431,9 +431,6 @@ namespace Grappa {
         Grappa::mypts() = mycache.rts = mycache.wts = ts;
         /// Update my own cache or owner storage.
         *target.pointer() = value;
-        if (Grappa::mypts() != pts) {
-          //LOG(INFO) << "pts " << pts << "=>" << Grappa::mypts();
-        }
         LOG(INFO) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
           << " #" << delegate_reads << " write wts "
           << mycache.wts << " rts " << mycache.rts << " pts " << Grappa::mypts();
@@ -448,9 +445,6 @@ namespace Grappa {
           timestamp_t ts = std::max<timestamp_t>(Grappa::mypts(), target_cache.rts + 1);
           Grappa::mypts() = target_cache.wts = target_cache.rts = ts;
           *target.pointer() = value;
-          if (Grappa::mypts() != pts) {
-            //LOG(INFO) << "pts " << pts << "=>" << Grappa::mypts();
-          }
           return ts;
         });
         mycache.valid = true;

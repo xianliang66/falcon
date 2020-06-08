@@ -2,56 +2,46 @@
 #include <cstdlib>
 
 // YCSB template parameters
-const int recordcount = 10000;
-const int operationcount = 3000000;
-const double readproportion = .95;
-const double updateproportion = .05;
+#define recordcount 8
+#define operationcount 100
+#define readproportion .8
+#define updateproportion (1 - readproportion)
 // Percentage of data items that constitute the hot set
-const double hotspotdatafraction = .2;
+#define hotspotdatafraction .2
 // Percentage of operations that access the hot set
-const double hotspotopnfraction = .8;
+#define hotspotopnfraction .8
 
 enum db_op { READ, UPDATE, INSERT, REMOVE };
 
-static char keys[recordcount][RECORD_LENGTH];
-
-static void init_keys() {
-  for (int i = 0; i < recordcount; i++) {
-    for (int j = 0; j < RECORD_LENGTH; j++) {
-      keys[i][j] = rand() % 0xFF;
-    }
-  }
-}
-
-static void generate_value(char* value) {
-  for (int j = 0; j < RECORD_LENGTH; j++) {
-    value[j] = rand() % 0xFF;
-  }
-}
-
 static void init_db(db& db) {
-  char value[RECORD_LENGTH];
-  generate_value(value);
+  static_assert(SLOT_NUMBER >= 2 * recordcount, "Too many records!");
+
+  db.data = global_alloc<record>(SLOT_NUMBER);
+  record_field_t key, value;
   for (int i = 0; i < recordcount; i++) {
-    db.insert(keys[i], value);
+    db.generate_key(i, key);
+    db.generate_value(value);
+    bool r = db.insert(key, value, i);
   }
 }
 
-static void execute_operation(db& db) {
+static int failcount = 0;
+static void execute_operation(db db) {
   db_op op;
   bool hotop;
   double dice;
-  char value[RECORD_LENGTH];
+  record_field_t key, value;
+  bool result;
 
   dice = rand() * 1.0 / RAND_MAX;
-  if (dice < .95) {
+  if (dice < readproportion) {
     op = READ;
   }
   else {
     op = UPDATE;
   }
   dice = rand() * 1.0 / RAND_MAX;
-  if (dice < .8) {
+  if (dice < hotspotopnfraction) {
     hotop = true;
   }
   else {
@@ -63,24 +53,50 @@ static void execute_operation(db& db) {
     case READ: {
       if (hotop) {
         int idx = recordcount * hotspotdatafraction * dice;
-        db.read(keys[idx], value);
+        db.generate_key(idx, key);
+        result = db.read(key, value, idx);
+        if (!result) {
+          LOG(ERROR) << "Core " << Grappa::mycore() << " read " << idx << " failed. Hash:"
+            << db.hash(key);
+          failcount++;
+        }
       }
       else {
-        int idx = recordcount * (1 - hotspotdatafraction) * dice;
-        db.read(keys[idx], value);
+        int idx = (recordcount - recordcount * hotspotdatafraction) * dice
+          + recordcount * hotspotdatafraction;
+        db.generate_key(idx, key);
+        result = db.read(key, value, idx);
+        if (!result) {
+          LOG(ERROR) << "Core " << Grappa::mycore() << " read " << idx << " failed. Hash:"
+            << db.hash(key);
+          failcount++;
+        }
       }
       break;
     }
     case UPDATE: {
       if (hotop) {
-        generate_value(value);
         int idx = recordcount * hotspotdatafraction * dice;
-        db.update(keys[idx], value);
+        db.generate_key(idx, key);
+        db.generate_value(value);
+        result = db.update(key, value, idx);
+        if (!result) {
+          LOG(ERROR) << "Core " << Grappa::mycore() << " write " << idx << " failed. Hash:"
+            << db.hash(key);
+          failcount++;
+        }
       }
       else {
-        generate_value(value);
-        int idx = recordcount * (1 - hotspotdatafraction) * dice;
-        db.update(keys[idx], value);
+        int idx = (recordcount - recordcount * hotspotdatafraction) * dice
+          + recordcount * hotspotdatafraction;
+        db.generate_key(idx, key);
+        db.generate_value(value);
+        result = db.update(key, value, idx);
+        if (!result) {
+          LOG(ERROR) << "Core " << Grappa::mycore() << " write " << idx << " failed. Hash:"
+            << db.hash(key);
+          failcount++;
+        }
       }
       break;
     }
@@ -93,16 +109,21 @@ int main(int argc, char * argv[]) {
     Metrics::reset_all_cores();
     Metrics::start_tracing();
 
-    srand(0);
-    init_keys();
+    srand(1);
 
-    db db;
-    init_db(db);
+    db mydb;
+    init_db(mydb);
 
-    on_all_cores( [&db] {
+    // Why can't we pass db the lambda expression?
+    GlobalAddress<record> g = mydb.data;
+
+    on_all_cores( [g] {
+      srand(1);
+      db a(g);
       for (int i = 0; i < operationcount; i++) {
-        execute_operation(db);
+        execute_operation(a);
       }
+      LOG(ERROR) << "Core " << Grappa::mycore() << " failure count " << failcount;
     });
 
     Metrics::merge_and_dump_to_file();
