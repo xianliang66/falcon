@@ -61,7 +61,6 @@ GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_cache_expired);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_call_all);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_call_one);
 
-static Grappa::Mutex global_lock;
 
 namespace Grappa {
     /// @addtogroup Delegates
@@ -120,17 +119,17 @@ namespace Grappa {
   namespace delegate {
 
 #ifdef GRAPPA_TARDIS_CACHE
-    enum CacheState { Hit, Expired, Miss };
+    enum CacheState { Owner, Hit, Expired, Miss };
 
     template <typename T>
     CacheState try_read_cache(const GlobalAddress<T>& t) {
-      cache_info& mycache = GlobalAddress<T>::find_cache(t);
+      cache_info<T>& mycache = GlobalAddress<T>::find_cache(t);
       if (t.is_owner()) {
         if (Grappa::mypts() > mycache.rts) {
           mycache.rts = Grappa::mypts();
         }
         delegate_cache_hit++;
-        return CacheState::Hit;
+        return CacheState::Owner;
       }
       if (!mycache.valid) {
         delegate_cache_miss++;
@@ -179,31 +178,7 @@ namespace Grappa {
       decltype(func(*t.pointer())) {
       delegate_call_one++;
 #ifdef GRAPPA_TARDIS_CACHE
-      lock(&global_lock);
-      cache_info& mycache = GlobalAddress<T>::find_cache(t);
-      if (t.is_owner()) {
-        timestamp_t ts = std::max<timestamp_t>(Grappa::mypts(), mycache.rts + 1);
-        Grappa::mypts() = mycache.rts = mycache.wts = ts;
-        LOG(INFO) << "Core " << Grappa::mycore() << " ptr " << t.raw_bits() << " #" <<
-          delegate_call_one << " call wts " << mycache.wts << " rts " <<
-          mycache.rts << " pts " << Grappa::mypts();
-        unlock(&global_lock);
-        return func(*t.pointer());
-      }
-      else {
-        //Grappa::mypts() += 2*LEASE;
-        mycache.valid = false;
-        unlock(&global_lock);
-        return delegate::internal_call<S,C>(t.core(), [t,func] {
-          cache_info& target_cache = GlobalAddress<T>::find_cache(t);
-          timestamp_t ts = std::max<timestamp_t>(Grappa::mypts(), target_cache.rts + 1);
-          Grappa::mypts() = target_cache.rts = target_cache.wts = ts;
-          LOG(INFO) << "Core " << Grappa::mycore() << " ptr " << t.raw_bits() << " #" <<
-          delegate_call_one << " call wts " << target_cache.wts << " rts " <<
-          target_cache.rts << " pts " << Grappa::mypts();
-          return func(*t.pointer());
-        });
-      }
+      static_assert(true, "not implemented yet.");
 #else
       return delegate::internal_call<S,C>(t.core(), [t,func] {
         return func(*t.pointer());
@@ -215,31 +190,7 @@ namespace Grappa {
       decltype(func(t.pointer())) {
       delegate_call_one++;
 #ifdef GRAPPA_TARDIS_CACHE
-      lock(&global_lock);
-      cache_info& mycache = GlobalAddress<T>::find_cache(t);
-      if (t.is_owner()) {
-        timestamp_t ts = std::max<timestamp_t>(Grappa::mypts(), mycache.rts + 1);
-        Grappa::mypts() = mycache.rts = mycache.wts = ts;
-        LOG(INFO) << "Core " << Grappa::mycore() << " ptr " << t.raw_bits() << " #" <<
-          delegate_call_one << " call wts " << mycache.wts << " rts " <<
-          mycache.rts << " pts " << Grappa::mypts();
-        unlock(&global_lock);
-        return func(t.pointer());
-      }
-      else {
-        //Grappa::mypts() += 2*LEASE;
-        mycache.valid = false;
-        unlock(&global_lock);
-        return delegate::internal_call<S,C>(t.core(), [t,func] {
-          cache_info& target_cache = GlobalAddress<T>::find_cache(t);
-          timestamp_t ts = std::max<timestamp_t>(Grappa::mypts(), target_cache.rts + 1);
-          Grappa::mypts() = target_cache.wts = target_cache.rts = ts;
-          LOG(INFO) << "Core " << Grappa::mycore() << " ptr " << t.raw_bits() << " #" <<
-          delegate_call_one << " call wts " << target_cache.wts << " rts " <<
-          target_cache.rts << " pts " << Grappa::mypts();
-          return func(t.pointer());
-        });
-      }
+      static_assert(true, "not implemented yet.");
 #else
       return delegate::internal_call<S,C>(t.core(), [t,func] {
         return func(t.pointer());
@@ -369,33 +320,36 @@ namespace Grappa {
       delegate_reads++;
 
 #ifdef GRAPPA_TARDIS_CACHE
-      lock(&global_lock);
-      impl::cache_info& mycache = GlobalAddress<T>::find_cache(target);
-      if (try_read_cache(target) == CacheState::Hit) {
-        LOG(INFO) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
+      impl::cache_info<T>& mycache = GlobalAddress<T>::find_cache(target);
+      if (try_read_cache(target) == CacheState::Owner) {
+        LOG(INFO) << "Core " << Grappa::mycore() << " ptr " << target.pointer()
           << " #" << delegate_reads << " read wts "
-          << mycache.wts << " rts " << mycache.rts << " pts " << Grappa::mypts();
-        unlock(&global_lock);
+          << mycache.wts << " rts " << mycache.rts << " pts " << Grappa::mypts() << " owner:" << target.core();
         return *target.pointer();
+      }
+      if (try_read_cache(target) == CacheState::Hit) {
+        LOG(INFO) << "Core " << Grappa::mycore() << " ptr " << target.pointer()
+          << " #" << delegate_reads << " read wts "
+          << mycache.wts << " rts " << mycache.rts << " pts " << Grappa::mypts() << " owner:" << target.core();
+        return mycache.object;
       }
       timestamp_t pts = Grappa::mypts();
       auto r = internal_call<S,C>(target.core(), [target,mycache,pts]() {
         delegate_read_targets++;
 
-        impl::cache_info& target_cache = GlobalAddress<T>::find_cache(target);
+        impl::cache_info<T>& target_cache = GlobalAddress<T>::find_cache(target);
         target_cache.rts = std::max<timestamp_t>(std::max<timestamp_t>(
               target_cache.rts, target_cache.wts + LEASE), (pts + LEASE));
-        return impl::cache_result<T>(*target.pointer(), target_cache);
+        return impl::rpc_read_result<T>(*target.pointer(), target_cache);
       });
-      mycache.rts = r.cache.rts;
-      mycache.wts = r.cache.wts;
-      Grappa::mypts() = std::max<timestamp_t>(pts, r.cache.wts);
-      *target.pointer() = r.r;
+      mycache.rts = r.rts;
+      mycache.wts = r.wts;
+      Grappa::mypts() = std::max<timestamp_t>(pts, r.wts);
+      mycache.object = r.r;
       mycache.valid = true;
-        LOG(INFO) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
-          << " #" << delegate_reads << " read wts "
-          << mycache.wts << " rts " << mycache.rts << " pts " << Grappa::mypts();
-      unlock(&global_lock);
+      LOG(INFO) << "Core(M||E) " << Grappa::mycore() << " ptr " << target.pointer()
+        << " #" << delegate_reads << " read wts "
+        << mycache.wts << " rts " << mycache.rts << " pts " << Grappa::mypts();
       return r.r;
 #else
       return internal_call<S,C>(target.core(), [target]() -> T {
@@ -423,16 +377,15 @@ namespace Grappa {
       static_assert(std::is_convertible<T,U>(), "type of value must match GlobalAddress type");
       delegate_writes++;
 #ifdef GRAPPA_TARDIS_CACHE
-      lock(&global_lock);
-      cache_info& mycache = GlobalAddress<T>::find_cache(target);
+      cache_info<T>& mycache = GlobalAddress<T>::find_cache(target);
       if (target.is_owner()) {
         timestamp_t pts = Grappa::mypts();
         timestamp_t ts = std::max<timestamp_t>(Grappa::mypts(), mycache.rts + 1);
         Grappa::mypts() = mycache.rts = mycache.wts = ts;
         /// Update my own cache or owner storage.
         *target.pointer() = value;
-        LOG(INFO) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
-          << " #" << delegate_reads << " write wts "
+        LOG(INFO) << "Core(O) " << Grappa::mycore() << " ptr " << target.pointer()
+          << " #" << delegate_writes << " write wts "
           << mycache.wts << " rts " << mycache.rts << " pts " << Grappa::mypts();
       }
       else {
@@ -441,7 +394,7 @@ namespace Grappa {
           timestamp_t pts = Grappa::mypts();
           delegate_write_targets++;
 
-          cache_info& target_cache = GlobalAddress<T>::find_cache(target);
+          cache_info<T>& target_cache = GlobalAddress<T>::find_cache(target);
           timestamp_t ts = std::max<timestamp_t>(Grappa::mypts(), target_cache.rts + 1);
           Grappa::mypts() = target_cache.wts = target_cache.rts = ts;
           *target.pointer() = value;
@@ -450,12 +403,11 @@ namespace Grappa {
         mycache.valid = true;
         Grappa::mypts() = mycache.rts = mycache.wts =
           std::max<timestamp_t>(Grappa::mypts(), r);
-        *target.pointer() = value;
-        LOG(INFO) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
+        mycache.object = value;
+        LOG(INFO) << "Core " << Grappa::mycore() << " ptr " << target.pointer()
           << " #" << delegate_writes << " write wts "
           << mycache.wts << " rts " << mycache.rts << " pts " << Grappa::mypts();
       }
-      unlock(&global_lock);
 #else
       internal_call<S,C>(target.core(), [target, value]() -> T {
         delegate_write_targets++;

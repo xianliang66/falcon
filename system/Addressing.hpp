@@ -115,16 +115,30 @@ template< typename T >
 class GlobalAddress {
 #ifdef GRAPPA_TARDIS_CACHE
 public:
-  static Grappa::impl::cache_info& find_cache( const GlobalAddress<T>& g ) {
-    extern std::map<void*,Grappa::impl::cache_info> cache;
+  static Grappa::impl::cache_info<T>& find_cache( const GlobalAddress<T>& g ) {
+    std::map<void*,void*>& tardis_cache = global_communicator.tardis_cache;
 
     void *rawptr = (void *)g.pointer();
-    auto it = cache.find(rawptr);
-    if (it == cache.end()) {
-      cache[rawptr] = Grappa::impl::cache_info();
-      cache[rawptr].core = g.core();
+    auto it = tardis_cache.find(rawptr);
+    if (it == tardis_cache.end()) {
+      tardis_cache[rawptr] = new Grappa::impl::cache_info<T>();
+      if (!tardis_cache[rawptr]) {
+        LOG(ERROR) << "Out of memory!";
+        exit(-1);
+      }
+      reinterpret_cast<Grappa::impl::cache_info<T>*>(tardis_cache[rawptr])->core
+        = g.core();
     }
-    return cache[rawptr];
+    return
+      *(reinterpret_cast<Grappa::impl::cache_info<T>*>(tardis_cache[rawptr]));
+  }
+  static void free_cache(void) {
+    std::map<void*,void*>& tardis_cache = global_communicator.tardis_cache;
+
+    for (auto it = tardis_cache.begin(); it != tardis_cache.end(); it++) {
+      delete reinterpret_cast<Grappa::impl::cache_info<T>*>(it->second);
+      it->second = nullptr;
+    }
   }
 private:
 #endif

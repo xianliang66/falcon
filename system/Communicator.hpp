@@ -117,6 +117,10 @@ void immediate_deserializer_with_payload( char * f, int size, CommunicatorContex
 
 /// Communication layer
 class Communicator {
+#ifdef GRAPPA_TARDIS_CACHE
+public:
+  std::map<void*,void*> tardis_cache;
+#endif
 private:
   DISALLOW_COPY_AND_ASSIGN( Communicator );
 

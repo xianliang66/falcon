@@ -5,7 +5,7 @@ using namespace std;
 
 static bool myassert(bool expr) {
   if (!(expr)) {
-    //std::cout << __FILE__ << ":" << __LINE__ << " aborted.\n";
+    LOG(ERROR) << __FILE__ << ":" << __LINE__ << " aborted.\n";
     return false;
     exit(0);
   }
@@ -149,7 +149,6 @@ static void test_9_11(GlobalAddress<int>& array) {
     });
     r2 = delegate::read(array+7);
     r3 = delegate::read(array+8);
-    LOG(ERROR) << r2 << r3;
     if (((r2 == 0 && r3 == 1) ||
          (r2 == 0 && r3 == 1))) {
       LOG(ERROR) << "ERROR: r2=" << r2 << " r3=" << r3;
@@ -166,7 +165,7 @@ int main(int argc, char * argv[]) {
 
     GlobalAddress< int > array = global_alloc<int>(15);
 
-    test_9_11(array);
+    test_5_8(array);
 
     Metrics::merge_and_dump_to_file();
 

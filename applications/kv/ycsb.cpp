@@ -2,8 +2,8 @@
 #include <cstdlib>
 
 // YCSB template parameters
-#define recordcount 8
-#define operationcount 100
+#define recordcount 100
+#define operationcount 50
 #define readproportion .8
 #define updateproportion (1 - readproportion)
 // Percentage of data items that constitute the hot set
@@ -11,6 +11,10 @@
 // Percentage of operations that access the hot set
 #define hotspotopnfraction .8
 
+/*
+ * GlobalAddress::pointer() returns valid pointer for owned objects. For
+ * non-owned objects, the pointer is INVALID!
+ */
 enum db_op { READ, UPDATE, INSERT, REMOVE };
 
 static void init_db(db& db) {
@@ -22,6 +26,9 @@ static void init_db(db& db) {
     db.generate_key(i, key);
     db.generate_value(value);
     bool r = db.insert(key, value, i);
+    if (!r) {
+      LOG(ERROR) << "Insert key " << i << " failed.";
+    }
   }
 }
 
@@ -78,7 +85,6 @@ static void execute_operation(db db) {
       if (hotop) {
         int idx = recordcount * hotspotdatafraction * dice;
         db.generate_key(idx, key);
-        db.generate_value(value);
         result = db.update(key, value, idx);
         if (!result) {
           LOG(ERROR) << "Core " << Grappa::mycore() << " write " << idx << " failed. Hash:"
@@ -90,7 +96,6 @@ static void execute_operation(db db) {
         int idx = (recordcount - recordcount * hotspotdatafraction) * dice
           + recordcount * hotspotdatafraction;
         db.generate_key(idx, key);
-        db.generate_value(value);
         result = db.update(key, value, idx);
         if (!result) {
           LOG(ERROR) << "Core " << Grappa::mycore() << " write " << idx << " failed. Hash:"
@@ -114,17 +119,18 @@ int main(int argc, char * argv[]) {
     db mydb;
     init_db(mydb);
 
+    record_field_t key, value;
     // Why can't we pass db the lambda expression?
     GlobalAddress<record> g = mydb.data;
 
     on_all_cores( [g] {
-      srand(1);
       db a(g);
       for (int i = 0; i < operationcount; i++) {
         execute_operation(a);
       }
-      LOG(ERROR) << "Core " << Grappa::mycore() << " failure count " << failcount;
+      LOG(ERROR) << "Core " << Grappa::mycore() << " failure count:" << failcount;
     });
+    global_free(mydb.data);
 
     Metrics::merge_and_dump_to_file();
 

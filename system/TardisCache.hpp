@@ -12,21 +12,24 @@ typedef int16_t Core;
 namespace Grappa {
 namespace impl {
 
+template< typename T >
 struct cache_info {
-  cache_info() {}
+  cache_info() : valid(false) {}
   cache_info(timestamp_t _rts, timestamp_t _wts) : rts(_rts), wts(_wts), valid(false) {}
   mutable timestamp_t rts, wts;
   mutable Core core;
   mutable bool valid;
+  mutable T object;
 };
 
 template< typename T >
-struct cache_result {
-  cache_result(T _r, cache_info& c) : r(_r), cache(c) {}
-  cache_result() {}
-  cache_info cache;
+struct rpc_read_result {
+  rpc_read_result(T _r, cache_info<T>& c) : r(_r), rts(c.rts), wts(c.wts) {}
+  rpc_read_result() {}
+  timestamp_t rts, wts;
   T r;
 };
+
 }
 }
 #endif

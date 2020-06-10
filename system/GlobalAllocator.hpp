@@ -40,7 +40,6 @@
 
 #include <boost/scoped_ptr.hpp>
 
-
 #include "Allocator.hpp"
 
 #include "DelegateBase.hpp"
@@ -156,6 +155,9 @@ GlobalAddress<T> global_alloc(size_t count) {
 /// Free memory allocated from global shared heap.
 template< typename T >
 void global_free(GlobalAddress<T> address) {
+#ifdef GRAPPA_TARDIS_CACHE
+  GlobalAddress<T>::free_cache();
+#endif
   GlobalAllocator::remote_free(static_cast<GlobalAddress<void>>(address));
 }
 

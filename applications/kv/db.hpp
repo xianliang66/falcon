@@ -5,7 +5,7 @@ using namespace Grappa;
 using namespace std;
 
 #define RECORD_LENGTH 64
-#define SLOT_NUMBER 20
+#define SLOT_NUMBER 200
 #define open_addr_limit 15
 
 #include <bitset>
@@ -14,6 +14,10 @@ class record_field_t {
 private:
   char data[RECORD_LENGTH];
 public:
+  record_field_t() { memset(data, 0, RECORD_LENGTH); }
+  record_field_t(const record_field_t& other) {
+    memcpy(data, other.data, RECORD_LENGTH);
+  }
   record_field_t& operator=(const record_field_t& other) {
     if (this != &other) {
       memcpy(data, other.data, RECORD_LENGTH);
@@ -26,6 +30,14 @@ public:
     }
     else {
       return true;
+    }
+  }
+  bool operator!=(const record_field_t& other) {
+    if (this == &other) {
+      return false;
+    }
+    else {
+      return memcmp(data, other.data, RECORD_LENGTH) != 0;
     }
   }
   char& operator[](int idx) { return data[idx]; }
@@ -60,7 +72,7 @@ public:
 
   record_field_t& key() { return _key; }
   record_field_t& value() { return _value; }
-  bool& valid() { return _valid; }
+  bool& valid() {  return _valid; }
 } GRAPPA_BLOCK_ALIGNED;
 
 class db {
@@ -85,7 +97,7 @@ public:
     static_assert(RECORD_LENGTH % sizeof(unsigned long) == 0,
         "RECORD_LENGTH is not multiple of hash result!");
     for (int i = 0; i < RECORD_LENGTH / sizeof(unsigned long); i+=sizeof(unsigned long)) {
-      int c = (79 * idx + i) * (idx + 377) * (i + 57) * 13379 + 86321727;
+      unsigned long c = (79 * idx + i) * (idx + 377) * (i + 574788) * 13379 + 8116321727L;
       for (int j = 0; j < sizeof(unsigned long); j++) {
         key[i + j] = (c >> 8 * j) & 0xFF;
       }
@@ -101,7 +113,7 @@ public:
   db() /*: data(global_alloc<record>(SLOT_NUMBER))*/ { }
   db(GlobalAddress<record> g) { data = g;}
   db(const db& d) { data = d.data; }
-  ~db() {global_free(data);}
+  ~db() {}
   db& operator=(const db& other) {
     if (this != &other) {
       data = other.data;
@@ -114,7 +126,8 @@ public:
     for (int i = start_idx; i < start_idx + open_addr_limit; i++) {
       record r = delegate::read(data + (i % SLOT_NUMBER));
       LOG(INFO) << "Core " << Grappa::mycore() << " read key  " << idx << " hash:" <<
-        hash(key) << " actually:" << hash(r.key()) << " valid " << r.valid() << " at " << (i % SLOT_NUMBER);
+        hash(key) << " actually:" << hash(r.key()) << " valid " << r.valid() <<
+        " at " << (i % SLOT_NUMBER);
       if (!r.valid()) {
         return false;
       }
@@ -130,14 +143,15 @@ public:
     int start_idx = hash(key) % SLOT_NUMBER;
     for (int i = start_idx; i < start_idx + open_addr_limit; i++) {
       record r = delegate::read(data + (i % SLOT_NUMBER));
-      LOG(INFO) << "Core " << Grappa::mycore() << " write key  " << idx << " hash:" <<
-        hash(key) << " actually:" << hash(r.key()) << " valid " << r.valid() << " at "
-        << (i % SLOT_NUMBER);
       if (!r.valid()) {
         return false;
       }
       if (r.key() == key) {
+        r.value() = value;
         delegate::write(data + (i % SLOT_NUMBER), r);
+        LOG(INFO) << "Core " << Grappa::mycore() << " write key  " << idx << " key:" <<
+          hash(key) << " value:" << hash(value) << " valid " << r.valid() << " at "
+          << (i % SLOT_NUMBER);
         return true;
       }
     }
@@ -149,11 +163,9 @@ public:
     for (int i = start_idx; i < start_idx + open_addr_limit; i++) {
       record r = delegate::read(data + (i % SLOT_NUMBER));
       if (!r.valid()) {
-        LOG(INFO) << "Insert key " << idx << " hash:" << hash(key)
-          << " from " << start_idx << " to " << (i % SLOT_NUMBER);
+        r.valid() = true;
         r.key() = key;
         r.value() = value;
-        r.valid() = true;
         delegate::write(data + (i % SLOT_NUMBER), r);
         return true;
       }
