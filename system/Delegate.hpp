@@ -321,7 +321,7 @@ namespace Grappa {
 
 #ifdef GRAPPA_TARDIS_CACHE
       impl::cache_info<T>& mycache = GlobalAddress<T>::find_cache(target);
-      if (try_read_cache(target) == CacheState::Owner) {
+      if (target.is_owner()) {
         LOG(INFO) << "Core " << Grappa::mycore() << " ptr " << target.pointer()
           << " #" << delegate_reads << " read wts "
           << mycache.wts << " rts " << mycache.rts << " pts " << Grappa::mypts() << " owner:" << target.core();
@@ -342,15 +342,17 @@ namespace Grappa {
               target_cache.rts, target_cache.wts + LEASE), (pts + LEASE));
         return impl::rpc_read_result<T>(*target.pointer(), target_cache);
       });
+      if (mycache.wts != r.wts) {
+        mycache.object = r.r;
+      }
       mycache.rts = r.rts;
       mycache.wts = r.wts;
       Grappa::mypts() = std::max<timestamp_t>(pts, r.wts);
-      mycache.object = r.r;
       mycache.valid = true;
       LOG(INFO) << "Core(M||E) " << Grappa::mycore() << " ptr " << target.pointer()
         << " #" << delegate_reads << " read wts "
         << mycache.wts << " rts " << mycache.rts << " pts " << Grappa::mypts();
-      return r.r;
+      return mycache.object;
 #else
       return internal_call<S,C>(target.core(), [target]() -> T {
         delegate_read_targets++;

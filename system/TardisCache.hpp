@@ -5,7 +5,7 @@
 #define GRAPPA_TARDIS_CACHE
 
 #ifdef GRAPPA_TARDIS_CACHE
-#define LEASE 10
+#define LEASE 10 
 typedef uint32_t timestamp_t;
 typedef int16_t Core;
 
@@ -14,7 +14,7 @@ namespace impl {
 
 template< typename T >
 struct cache_info {
-  cache_info() : valid(false) {}
+  cache_info() : valid(false), rts(0), wts(0) {}
   cache_info(timestamp_t _rts, timestamp_t _wts) : rts(_rts), wts(_wts), valid(false) {}
   mutable timestamp_t rts, wts;
   mutable Core core;

@@ -5,8 +5,8 @@ using namespace Grappa;
 using namespace std;
 
 #define RECORD_LENGTH 64
-#define SLOT_NUMBER 200
-#define open_addr_limit 15
+#define SLOT_NUMBER 25000
+#define open_addr_limit max(15, SLOT_NUMBER / 1000)
 
 #include <bitset>
 
@@ -126,8 +126,8 @@ public:
     for (int i = start_idx; i < start_idx + open_addr_limit; i++) {
       record r = delegate::read(data + (i % SLOT_NUMBER));
       LOG(INFO) << "Core " << Grappa::mycore() << " read key  " << idx << " hash:" <<
-        hash(key) << " actually:" << hash(r.key()) << " valid " << r.valid() <<
-        " at " << (i % SLOT_NUMBER);
+        hash(key) << " actually:" << hash(r.key()) << " value:" << hash(r.value()) <<
+        " valid " << r.valid() << " at " << (i % SLOT_NUMBER);
       if (!r.valid()) {
         return false;
       }

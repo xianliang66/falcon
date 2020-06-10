@@ -118,7 +118,7 @@ public:
   static Grappa::impl::cache_info<T>& find_cache( const GlobalAddress<T>& g ) {
     std::map<void*,void*>& tardis_cache = global_communicator.tardis_cache;
 
-    void *rawptr = (void *)g.pointer();
+    void *rawptr = (void *)g.raw_bits();
     auto it = tardis_cache.find(rawptr);
     if (it == tardis_cache.end()) {
       tardis_cache[rawptr] = new Grappa::impl::cache_info<T>();

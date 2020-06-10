@@ -2,9 +2,9 @@
 #include <cstdlib>
 
 // YCSB template parameters
-#define recordcount 100
-#define operationcount 50
-#define readproportion .8
+#define recordcount 10000
+#define operationcount 500000
+#define readproportion 1
 #define updateproportion (1 - readproportion)
 // Percentage of data items that constitute the hot set
 #define hotspotdatafraction .2
@@ -128,7 +128,9 @@ int main(int argc, char * argv[]) {
       for (int i = 0; i < operationcount; i++) {
         execute_operation(a);
       }
-      LOG(ERROR) << "Core " << Grappa::mycore() << " failure count:" << failcount;
+      if (failcount > 0) {
+        LOG(ERROR) << "Core " << Grappa::mycore() << " failure count:" << failcount;
+      }
     });
     global_free(mydb.data);
 
