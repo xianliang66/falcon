@@ -8,7 +8,7 @@
 DEFINE_bool(metrics, false, "Dump metrics");
 DEFINE_int32(scale, 10, "Log2 number of vertices.");
 DEFINE_int32(edgefactor, 16, "Average number of edges per vertex.");
-DEFINE_int64(root, 16, "Average number of edges per vertex.");
+DEFINE_int64(root, 16, "Index of root vertex.");
 
 using namespace Grappa;
 
@@ -22,68 +22,80 @@ GRAPPA_DEFINE_METRIC(SimpleMetric<double>, verify_time, 0);
 
 void dump_sssp_graph(GlobalAddress<G> &g);
 
-// global completion flag 
-bool global_complete = false;
-// local completion flag
-bool local_complete = false;
+static bool terminated(GlobalAddress<unsigned char> complete_addr) {
+  bool terminate = true;
+  for (int i = 0; i < Grappa::cores(); i++) {
+retry:
+    unsigned char c = delegate::read(complete_addr + i);
+    switch (c) {
+      case 0xCA: terminate = false; break;
+      // Wait for other threads to finish.
+      case 0xBA: Grappa::yield(); LOG(ERROR) << "retry"; goto retry;
+      case 0xFF: break;
+      // init
+      case 0: goto out;
+      default: LOG(ERROR) << "Unexcepted " << c; return true;
+    }
+  }
+  if (terminate) {
+    return true;
+  }
+out:
+  for (int i = 0; i < Grappa::cores(); i++)
+    delegate::write(complete_addr + i, 0xBA);
+  return false;
+}
 
 void do_sssp(GlobalAddress<G> &g, int64_t root) {
-
-    // intialize parent to -1
-    forall(g, [](G::Vertex& v){ v->init(v.nadj); });
-
-    VLOG(1) << "root => " << root;
-
     // set zero value for root distance and
     // setup 'root' as the parent of itself
-    delegate::call(g->vs+root,[=](G::Vertex& v) { 
-      v->dist = 0.0;
-      v->parent = root;
-    });
+    auto v = delegate::read(g->vs+root);
+    v.data.dist = 0.0;
+    v.data.parent = root;
+    delegate::write(g->vs+root, v);
 
     // expose global completion flag to global address space
-    GlobalAddress<bool> complete_addr = make_global(&global_complete);
+    GlobalAddress<unsigned char> complete_addr =
+      global_alloc<unsigned char>(Grappa::cores());
 
     int iter = 0;
-    while (!global_complete) {
+    while (!terminated(complete_addr)) {
       VLOG(1) << "iteration --> " << iter++;
 
-      global_complete = true;
-      on_all_cores([]{ local_complete = true; });
-
       // iterate over all vertices of the graph
-      forall(g, [=](VertexID vsid, G::Vertex& vs) {
-
-        if (vs->dist !=  std::numeric_limits<double>::max()) {
-
-          // if vertex is visited (i.e. dist != max()) then
-          // visit all the adjacencies of the vertex 
-          // and update there dist values if needed
-          double dist = vs->dist;
-          
-          forall(adj(g,vs), [=](G::Edge& e){
-            // calculate potentinal new distance and...
-            double sum = dist + e->weight;
-            // ...send it to the core where the vertex is located
-            delegate::call<async>(e.ga, [=](G::Vertex& ve){
-              if (sum < ve->dist) {
-                // update vertex parameters
-                ve->dist = sum;
-                ve->parent = vsid;
-
-                // update local global_complete flag
+      on_all_cores([g,complete_addr]{
+        // Remote call async?
+        bool local_complete = true;
+        for (VertexID id = 0; id < g->nv; id++) {
+          bool update = false;
+          if ((g->vs+id).core() == Grappa::mycore()) {
+            auto v = delegate::read(g->vs+id);
+            std::vector <VertexID> adjs = g->get_adj(id);
+            for (auto iter = adjs.begin(); iter != adjs.end(); iter++) {
+              G::Edge e = g->get_edge(id, *iter);
+              double neighbor_dist = delegate::read(g->vs+*iter).data.dist;
+              double sum = neighbor_dist + e.data.weight;
+              if (sum < v.data.dist) {
+                v.data.dist = sum;
+                v.data.parent = *iter;
+                v.data.seen = true;
                 local_complete = false;
+                update = true;
               }
-            });
-          });//forall_here
-        }//if
-      });//forall
-
-      // find if SSSP calculation is completed (must be completed
-      // in each core)
-      global_complete = reduce<bool,collective_and>(&local_complete);
-
-    }//while
+            }
+            if (update) {
+              delegate::write(g->vs+id, v);
+            }
+          }
+        }
+        if (local_complete) {
+          delegate::write(complete_addr + Grappa::mycore(), 0xFF);
+        }
+        else {
+          delegate::write(complete_addr + Grappa::mycore(), 0xCA);
+        }
+    });
+  }
 }
 
 int main(int argc, char* argv[]) {
@@ -92,7 +104,7 @@ int main(int argc, char* argv[]) {
     int64_t NE = (1L << FLAGS_scale) * FLAGS_edgefactor;
     bool verified = false;
     double t;
-    
+
     t = walltime();
 
     // generate "NE" edge tuples, sampling vertices using the
@@ -102,9 +114,9 @@ int main(int argc, char* argv[]) {
     // create graph with incorporated Vertex
     auto g = G::Undirected( tg );
     graph_create_time = (walltime()-t);
-    
+
     LOG(INFO) << "graph generated (#nodes = " << g->nv << "), " << graph_create_time;
-      
+
     t = walltime();
 
     auto root = FLAGS_root;

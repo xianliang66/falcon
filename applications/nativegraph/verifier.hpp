@@ -14,34 +14,37 @@ class VerificatorBase {
 public:
 
   static int64_t get_level(GlobalAddress<G> g, int64_t j) {
-    return delegate::call(g->vs+j, [](Vertex& v){ return v->level; });
+    return delegate::read(g->vs+j).data.level;
   }
   static int64_t get_parent(GlobalAddress<G> g, int64_t j) {
-    return delegate::call(g->vs+j, [](Vertex& v){ return v->parent; });
+    return delegate::read(g->vs+j).data.parent;
   }
 
   static int compute_levels(GlobalAddress<G> g, int64_t root) {
     // compute levels
     delegate::call(g->vs+root, [](Vertex& v){ v->level = 0; });
-  
+    auto v = delegate::read(g->vs+root);
+    v.data.level = 0;
+    delegate::write(g->vs+root, v);
+
     forall(g, [=](VertexID i, Vertex& v){
       if (v->level >= 0) return;
-      
+
       if (v->parent >= 0 && i != root) {
         int64_t parent = i;
         int64_t nhop = 0;
         int64_t next_parent;
-        
+
         while (parent >= 0 && get_level(g, parent) < 0 && nhop < g->nv) {
           next_parent = get_parent(g, parent);
           CHECK_NE(parent, next_parent);
           parent = next_parent;
           ++nhop;
         }
-        
+
         CHECK_LT(nhop, g->nv);
         CHECK_GE(parent, 0);
-        
+
         // now assign levels until we meet an already-leveled vertex
         nhop += get_level(g, parent);
         parent = i;
@@ -106,7 +109,7 @@ public:
       }
       lvldiff = get_level(g,i) - get_level(g,j);
       /* Check that the levels differ by no more than one. */
-      CHECK(!(lvldiff > 1 || lvldiff < -1)) << "Error, levels differ by more than one! " << "(k = " << ", lvl[" << i << "]=" 
+      CHECK(!(lvldiff > 1 || lvldiff < -1)) << "Error, levels differ by more than one! " << "(k = " << ", lvl[" << i << "]="
         << get_level(g,i) << ", lvl[" << j << "]=" << get_level(g,j) << ")";
 
     });
@@ -114,12 +117,14 @@ public:
     nedge_traversed = Grappa::reduce<int64_t,collective_add>(&nedge_traversed);
 
     // check that every BFS edge was seen & that there's only one root
-    forall(g, [=](VertexID i, Vertex& v){
+    for (VertexID i = 0; i < g->nv; i++) {
+      auto v = delegate::read(g->vs + i).data;
       if (i != root) {
-        CHECK(!(v->parent >= 0 && !v->seen)) << "Error!" << "VertexID: " << i <<" v->parent =" << v->parent << " v->seen = " << v->seen;
-        CHECK_NE(v->parent, i);
+        CHECK(!(v.parent >= 0 && !v.seen)) << "Error!" << "VertexID: " << i
+          <<" v->parent =" << v.parent << " v->seen = " << v.seen;
+        CHECK_NE(v.parent, i);
       }
-    });
+    }
 
     // everything checked out!
     VLOG(1) << "verified!\n";
