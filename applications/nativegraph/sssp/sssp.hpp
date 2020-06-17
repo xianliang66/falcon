@@ -19,9 +19,26 @@ struct SSSPData {
   }
 };
 
+static unsigned long hash(char *s, int l)
+{
+  unsigned long hash = 5381;
+  char c;
+
+  for (unsigned i = 0; i < l; i++) {
+    c = s[i];
+    hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+  }
+
+  return hash;
+}
+
 struct SSSPEdgeData {
   double weight;
-  SSSPEdgeData(): weight(rand() % 100/*drand48()*/) {}
+  // (source, dest). The value should be agreed by all cores.
+  SSSPEdgeData(int i, int j) {
+    int s = ~585 * i + j;
+    weight = hash((char *)&s, sizeof(int)) % 1024;
+  }
 };
 
 using G = Graph<SSSPData,SSSPEdgeData>;

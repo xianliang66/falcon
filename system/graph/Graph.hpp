@@ -180,6 +180,7 @@ namespace Grappa {
       bool valid;
 
       Edge(): valid(false) {}
+      Edge(int i, int j): data(EdgeState(i, j)), valid(false) {}
       /// Access elements of EdgeState with operator '->'
       EdgeState* operator->() { return &data; }
       const EdgeState* operator->() const { return &data; }
@@ -309,7 +310,7 @@ namespace Grappa {
         // Edge data is given by applications (default constructor of EdgeData
         // rather than input data. They're immutable.
         for (size_t j=0; j<g->nv; j++) {
-          g->edge_storage[i][j] = Edge();
+          g->edge_storage[i][j] = Edge(i, j);
         }
       }
     });
