@@ -327,7 +327,8 @@ namespace Grappa {
     // Set topology of graph
     on_all_cores([g,tg,directed] {
       for (size_t i=0; i<tg.nedge; i++) {
-        auto e = delegate::read(tg.edges + i);
+        auto e = delegate::read<SyncMode::Blocking,CacheMode::WriteThrough>
+          (tg.edges + i);
         VertexID s = e.v0;
         VertexID d = e.v1;
         CHECK_LT(s, g->nv); CHECK_LT(d, g->nv);

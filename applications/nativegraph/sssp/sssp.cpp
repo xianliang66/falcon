@@ -22,11 +22,18 @@ GRAPPA_DEFINE_METRIC(SimpleMetric<double>, verify_time, 0);
 
 void dump_sssp_graph(GlobalAddress<G> &g);
 
+static void naive_sync(GlobalAddress<G> g) {
+  on_all_cores([g] {
+    Grappa::mypts() += 100;
+  });
+}
+
 static bool terminated(GlobalAddress<unsigned char> complete_addr) {
   bool terminate = true;
   for (int i = 0; i < Grappa::cores(); i++) {
 retry:
-    unsigned char c = delegate::read(complete_addr + i);
+    unsigned char c = delegate::read<SyncMode::Blocking,
+      CacheMode::WriteThrough>(complete_addr + i);
     switch (c) {
       case 0xCA: terminate = false; break;
       // Wait for other threads to finish.
@@ -42,7 +49,8 @@ retry:
   }
 out:
   for (int i = 0; i < Grappa::cores(); i++)
-    delegate::write(complete_addr + i, 0xBA);
+    delegate::write<SyncMode::Blocking,
+      CacheMode::WriteThrough>(complete_addr + i, 0xBA);
   return false;
 }
 
@@ -60,7 +68,7 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
 
     int iter = 0;
     while (!terminated(complete_addr)) {
-      VLOG(1) << "iteration --> " << iter++;
+      LOG(ERROR) << "iteration --> " << iter++;
 
       // iterate over all vertices of the graph
       on_all_cores([g,complete_addr]{
@@ -75,7 +83,13 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
               G::Edge e = g->get_edge(id, *iter);
               double neighbor_dist = delegate::read(g->vs+*iter).data.dist;
               double sum = neighbor_dist + e.data.weight;
+              LOG(ERROR) << "Core " << Grappa::mycore() << "(" << id << "," << v.data.dist << ")" << "--"
+                << e.data.weight << "-->" <<  "(" << *iter << "," << neighbor_dist << ")" ;
               if (sum < v.data.dist) {
+                LOG(ERROR) << "Core " << Grappa::mycore() << "(" << id << ","
+                << v.data.dist << ")" << "--"
+                << e.data.weight << "-->" <<  "(" << *iter << ","
+                << neighbor_dist << ") to " << sum;
                 v.data.dist = sum;
                 v.data.parent = *iter;
                 v.data.seen = true;
@@ -89,13 +103,16 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
           }
         }
         if (local_complete) {
-          delegate::write(complete_addr + Grappa::mycore(), 0xFF);
+          delegate::write<SyncMode::Blocking,
+            CacheMode::WriteThrough>(complete_addr + Grappa::mycore(), 0xFF);
         }
         else {
-          delegate::write(complete_addr + Grappa::mycore(), 0xCA);
+          delegate::write<SyncMode::Blocking,
+            CacheMode::WriteThrough>(complete_addr + Grappa::mycore(), 0xCA);
         }
     });
   }
+  naive_sync(g);
 }
 
 int main(int argc, char* argv[]) {
@@ -115,7 +132,7 @@ int main(int argc, char* argv[]) {
     auto g = G::Undirected( tg );
     graph_create_time = (walltime()-t);
 
-    LOG(INFO) << "graph generated (#nodes = " << g->nv << "), " << graph_create_time;
+    LOG(ERROR) << "graph generated (#nodes = " << g->nv << "), " << graph_create_time;
 
     t = walltime();
 
@@ -123,7 +140,7 @@ int main(int argc, char* argv[]) {
     do_sssp(g, root);
 
     double this_sssp_time = walltime() - t;
-    LOG(INFO) << "(root=" << root << ", time=" << this_sssp_time << ")";
+    LOG(ERROR) << "(root=" << root << ", time=" << this_sssp_time << ")";
     sssp_time += this_sssp_time;
 
     if (!verified) {
@@ -131,12 +148,12 @@ int main(int argc, char* argv[]) {
       t = walltime();
       sssp_nedge = Verificator<G>::verify(tg, g, root);
       verify_time = (walltime()-t);
-      LOG(INFO) << verify_time;
+      LOG(ERROR) << verify_time;
       verified = true;
     }
     sssp_mteps += sssp_nedge / this_sssp_time / 1.0e6;
 
-    LOG(INFO) << "\n" << sssp_nedge << "\n" << sssp_time << "\n" << sssp_mteps;
+    LOG(ERROR) << "\n" << sssp_nedge << "\n" << sssp_time << "\n" << sssp_mteps;
 
     if (FLAGS_metrics) Metrics::merge_and_print();
     Metrics::merge_and_dump_to_file();
