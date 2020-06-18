@@ -2,7 +2,7 @@
 #include <iostream>
 
 /// Whether the delegate operations use Tardis-based cache.
-#define GRAPPA_TARDIS_CACHE
+//#define GRAPPA_TARDIS_CACHE
 
 #ifdef GRAPPA_TARDIS_CACHE
 #define LEASE 10 

@@ -121,11 +121,13 @@ public:
     void *rawptr = (void *)g.raw_bits();
     auto it = tardis_cache.find(rawptr);
     if (it == tardis_cache.end()) {
-      tardis_cache[rawptr] = new Grappa::impl::cache_info<T>();
+      tardis_cache[rawptr] = malloc(sizeof(Grappa::impl::cache_info<T>));
       if (!tardis_cache[rawptr]) {
         LOG(ERROR) << "Out of memory!";
         exit(-1);
       }
+      *reinterpret_cast<Grappa::impl::cache_info<T>*>(tardis_cache[rawptr]) =
+        Grappa::impl::cache_info<T>();
       reinterpret_cast<Grappa::impl::cache_info<T>*>(tardis_cache[rawptr])->core
         = g.core();
     }
@@ -136,7 +138,7 @@ public:
     std::map<void*,void*>& tardis_cache = global_communicator.tardis_cache;
 
     for (auto it = tardis_cache.begin(); it != tardis_cache.end(); it++) {
-      delete reinterpret_cast<Grappa::impl::cache_info<T>*>(it->second);
+      free(it->second);
       it->second = nullptr;
     }
   }

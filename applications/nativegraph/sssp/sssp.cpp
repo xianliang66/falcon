@@ -6,8 +6,8 @@
 
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 10, "Log2 number of vertices.");
-DEFINE_int32(edgefactor, 16, "Average number of edges per vertex.");
+DEFINE_int32(scale, 14, "Log2 number of vertices.");
+DEFINE_int32(edgefactor, 128, "Average number of edges per vertex.");
 DEFINE_int64(root, 16, "Index of root vertex.");
 
 using namespace Grappa;
@@ -22,38 +22,30 @@ GRAPPA_DEFINE_METRIC(SimpleMetric<double>, verify_time, 0);
 
 void dump_sssp_graph(GlobalAddress<G> &g);
 
-static void naive_sync(GlobalAddress<G> g) {
-  on_all_cores([g] {
-    Grappa::mypts() += 100;
-  });
-}
-
-static bool terminated(GlobalAddress<unsigned char> complete_addr) {
-  bool terminate = true;
+enum thread_state { INIT = 0x0, RUNNING = 0xBA, UPDATE = 0xCA, TERMINATE = 0xFF };
+static bool terminated(GlobalAddress<thread_state> complete_addr) {
+  if (delegate::read(complete_addr) != INIT) {
+    on_all_cores([complete_addr] {
+      for (int i = 0; i < Grappa::cores(); i++) {
+        while (delegate::read(complete_addr + i) == RUNNING) {
+          Grappa::yield();
+        }
+      }
+    });
+  }
   for (int i = 0; i < Grappa::cores(); i++) {
-retry:
-    unsigned char c = delegate::read<SyncMode::Blocking,
-      CacheMode::WriteThrough>(complete_addr + i);
-    switch (c) {
-      case 0xCA: terminate = false; break;
-      // Wait for other threads to finish.
-      case 0xBA: Grappa::yield(); LOG(ERROR) << "retry"; goto retry;
-      case 0xFF: break;
-      // init
-      case 0: goto out;
-      default: LOG(ERROR) << "Unexcepted " << c; return true;
+    thread_state ts = delegate::read(complete_addr + i);
+    if (ts == UPDATE || ts == INIT) {
+      for (int j = 0; j < Grappa::cores(); j++) {
+        delegate::write(complete_addr + j, RUNNING);
+      }
+      return false;
     }
   }
-  if (terminate) {
-    return true;
-  }
-out:
-  for (int i = 0; i < Grappa::cores(); i++)
-    delegate::write<SyncMode::Blocking,
-      CacheMode::WriteThrough>(complete_addr + i, 0xBA);
-  return false;
+  return true;
 }
 
+static GlobalCompletionEvent gce;
 void do_sssp(GlobalAddress<G> &g, int64_t root) {
     // set zero value for root distance and
     // setup 'root' as the parent of itself
@@ -63,56 +55,53 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
     delegate::write(g->vs+root, v);
 
     // expose global completion flag to global address space
-    GlobalAddress<unsigned char> complete_addr =
-      global_alloc<unsigned char>(Grappa::cores());
+    GlobalAddress<thread_state> complete_addr =
+      global_alloc<thread_state>(Grappa::cores());
 
     int iter = 0;
+    static bool local_complete = true;
     while (!terminated(complete_addr)) {
       LOG(ERROR) << "iteration --> " << iter++;
 
       // iterate over all vertices of the graph
       on_all_cores([g,complete_addr]{
         // Remote call async?
-        bool local_complete = true;
+        local_complete = true;
         for (VertexID id = 0; id < g->nv; id++) {
-          bool update = false;
           if ((g->vs+id).core() == Grappa::mycore()) {
-            auto v = delegate::read(g->vs+id);
-            std::vector <VertexID> adjs = g->get_adj(id);
-            for (auto iter = adjs.begin(); iter != adjs.end(); iter++) {
-              G::Edge e = g->get_edge(id, *iter);
-              double neighbor_dist = delegate::read(g->vs+*iter).data.dist;
-              double sum = neighbor_dist + e.data.weight;
-              LOG(ERROR) << "Core " << Grappa::mycore() << "(" << id << "," << v.data.dist << ")" << "--"
-                << e.data.weight << "-->" <<  "(" << *iter << "," << neighbor_dist << ")" ;
-              if (sum < v.data.dist) {
-                LOG(ERROR) << "Core " << Grappa::mycore() << "(" << id << ","
-                << v.data.dist << ")" << "--"
-                << e.data.weight << "-->" <<  "(" << *iter << ","
-                << neighbor_dist << ") to " << sum;
-                v.data.dist = sum;
-                v.data.parent = *iter;
-                v.data.seen = true;
-                local_complete = false;
-                update = true;
+            auto func = [g,id] {
+              bool update = false;
+              auto v = delegate::read(g->vs+id);
+              std::vector <VertexID> adjs = g->get_adj(id);
+              for (auto iter = adjs.begin(); iter != adjs.end(); iter++) {
+                G::Edge e = g->get_edge(id, *iter);
+                double neighbor_dist = delegate::read(g->vs+*iter).data.dist;
+                double sum = neighbor_dist + e.data.weight;
+                if (sum < v.data.dist) {
+                  v.data.dist = sum;
+                  v.data.parent = *iter;
+                  v.data.seen = true;
+                  local_complete = false;
+                  update = true;
+                }
               }
-            }
-            if (update) {
-              delegate::write(g->vs+id, v);
-            }
-          }
+              if (update) {
+                delegate::write(g->vs+id, v);
+              }
+            };
+            spawnRemote<&gce>(Grappa::mycore(), func);
+            //func();
         }
-        if (local_complete) {
-          delegate::write<SyncMode::Blocking,
-            CacheMode::WriteThrough>(complete_addr + Grappa::mycore(), 0xFF);
-        }
-        else {
-          delegate::write<SyncMode::Blocking,
-            CacheMode::WriteThrough>(complete_addr + Grappa::mycore(), 0xCA);
-        }
+      }
+      gce.wait();
+      if (local_complete) {
+        delegate::write(complete_addr + Grappa::mycore(), TERMINATE);
+      }
+      else {
+        delegate::write(complete_addr + Grappa::mycore(), UPDATE);
+      }
     });
   }
-  naive_sync(g);
 }
 
 int main(int argc, char* argv[]) {

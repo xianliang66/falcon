@@ -158,16 +158,7 @@ namespace Grappa {
     auto call(Core dest, F f) -> decltype((impl::Specializer<S,C,F>::call(dest, f,
             &F::operator()))) {
       delegate_call_all++;
-#ifdef GRAPPA_TARDIS_CACHE
-      invalidate_core(dest);
-      LOG(INFO) << "invalidate core " << dest;
-      return internal_call(dest, [f] {
-          write_core();
-          return f();
-      });
-#else
       return internal_call(dest, f);
-#endif
     }
 
   } // namespace delegate
