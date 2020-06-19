@@ -168,25 +168,17 @@ namespace Grappa {
     inline auto call(GlobalAddress<T> t, F func, R (F::*mf)(T&) const) ->
       decltype(func(*t.pointer())) {
       delegate_call_one++;
-#ifdef GRAPPA_TARDIS_CACHE
-      static_assert(true, "not implemented yet.");
-#else
       return delegate::internal_call<S,C>(t.core(), [t,func] {
         return func(*t.pointer());
       });
-#endif
     }
     template< SyncMode S, GlobalCompletionEvent * C, typename T, typename R, typename F >
     inline auto call(GlobalAddress<T> t, F func, R (F::*mf)(T*) const) ->
       decltype(func(t.pointer())) {
       delegate_call_one++;
-#ifdef GRAPPA_TARDIS_CACHE
-      static_assert(true, "not implemented yet.");
-#else
       return delegate::internal_call<S,C>(t.core(), [t,func] {
         return func(t.pointer());
       });
-#endif
     }
   }
 

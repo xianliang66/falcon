@@ -6,9 +6,9 @@
 
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 14, "Log2 number of vertices.");
-DEFINE_int32(edgefactor, 128, "Average number of edges per vertex.");
-DEFINE_int64(root, 16, "Index of root vertex.");
+DEFINE_int32(scale, 18, "Log2 number of vertices.");
+DEFINE_int32(edgefactor, 12, "Average number of edges per vertex.");
+DEFINE_int64(root, 1, "Index of root vertex.");
 
 using namespace Grappa;
 
@@ -46,6 +46,7 @@ static bool terminated(GlobalAddress<thread_state> complete_addr) {
 }
 
 static GlobalCompletionEvent gce;
+static int nupdates = 0;
 void do_sssp(GlobalAddress<G> &g, int64_t root) {
     // set zero value for root distance and
     // setup 'root' as the parent of itself
@@ -65,7 +66,7 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
 
       // iterate over all vertices of the graph
       on_all_cores([g,complete_addr]{
-        // Remote call async?
+        // Remote call async
         local_complete = true;
         for (VertexID id = 0; id < g->nv; id++) {
           if ((g->vs+id).core() == Grappa::mycore()) {
@@ -86,6 +87,7 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
                 }
               }
               if (update) {
+                nupdates++;
                 delegate::write(g->vs+id, v);
               }
             };
@@ -94,6 +96,8 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
         }
       }
       gce.wait();
+      LOG(ERROR) << "Core " << Grappa::mycore() << " updates " << nupdates;
+      nupdates = 0;
       if (local_complete) {
         delegate::write(complete_addr + Grappa::mycore(), TERMINATE);
       }

@@ -54,6 +54,8 @@
 #include <mpi.h>
 #endif
 
+static Grappa::GlobalCompletionEvent graph_gce;
+
 namespace Grappa {
   /// @addtogroup Graph
   /// @{
@@ -83,7 +85,7 @@ namespace Grappa {
     ///   int64_t parent() { return data; }
     ///   void parent(int64_t parent) { data = parent; }
     /// };
-    /// Edge info is now stored in Graph's adjacent matrix.
+    /// Edge info is stored in Graph's adjacent list.
     /// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     template< typename T, bool HeapData = (sizeof(T) > BLOCK_SIZE) >
     struct Vertex {
@@ -177,10 +179,10 @@ namespace Grappa {
 
     struct Edge {
       EdgeState data;
-      bool valid;
+      VertexID toId;
 
-      Edge(): valid(false) {}
-      Edge(int i, int j): data(EdgeState(i, j)), valid(false) {}
+      Edge() {}
+      Edge(int s, int d): data(EdgeState(s, d)), toId(d) {}
       /// Access elements of EdgeState with operator '->'
       EdgeState* operator->() { return &data; }
       const EdgeState* operator->() const { return &data; }
@@ -188,18 +190,13 @@ namespace Grappa {
 
     static_assert(block_size % sizeof(Vertex) == 0, "V size not evenly divisible into blocks!");
 
-    // using Vertex = V;
-
-    // // Helpers (for if we go with custom cyclic distribution)
-    // inline Core    vertex_owner (int64_t v) { return v % cores(); }
-    // inline int64_t vertex_offset(int64_t v) { return v / cores(); }
-
     // Fields
     GlobalAddress<Vertex> vs;
     int64_t nv;
 
-    // Adjacent matrix (nv*nv)
-    Edge ** edge_storage;
+    std::vector <VertexID> owned;
+    // Adjacent list
+    std::vector <std::vector<Edge>> edge_storage;
 
     GlobalAddress<Graph> self;
 
@@ -207,33 +204,46 @@ namespace Grappa {
       : self(self)
       , vs(vs)
       , nv(nv)
-      , edge_storage(nullptr)
     { }
 
     ~Graph() {
       for (Vertex& v : iterate_local(vs, nv)) { v.~Vertex(); }
-      if (edge_storage) {
-        for (int64_t i=0; i<nv; i++) {
-          for (int64_t j=0; j<nv; j++) {
-            edge_storage[i][j].data.~E();
-          }
+      for (unsigned i=0; i<edge_storage.size(); i++) {
+        for (unsigned j=0; j<edge_storage[i].size(); j++) {
+          edge_storage[i][j].data.~E();
         }
-        locale_free(edge_storage);
       }
+    }
+
+    int storage_idx(VertexID v) {
+      for (unsigned i = 0; i < owned.size(); i++) {
+        if (owned[i] == v) {
+          return i;
+        }
+      }
+      CHECK(0);
     }
 
     std::vector<VertexID> get_adj(VertexID id) {
       std::vector <VertexID> r;
-      for (VertexID iter = 0; iter<nv; iter++) {
-        if (edge_storage[id][iter].valid) {
-          r.push_back(iter);
-        }
+      auto adj = edge_storage[storage_idx(id)];
+      for (auto iter = adj.begin(); iter != adj.end(); iter++) {
+        r.push_back(iter->toId);
       }
       return r;
     }
 
     Edge get_edge(VertexID s, VertexID d) {
-      return edge_storage[s][d];
+      auto self = this->self;
+      return delegate::call((vs+s).core(), [self, s, d] {
+        auto adj = self->edge_storage[self->storage_idx(s)];
+        for (auto i = adj.begin(); i != adj.end(); i++) {
+          if (i->toId == d) {
+            return *i;
+          }
+        }
+        CHECK(0);
+      });
     }
 
     void destroy() {
@@ -245,26 +255,21 @@ namespace Grappa {
 
     template< int LEVEL = 0 >
     static void dump(GlobalAddress<Graph> g) {
-      for (int64_t i=0; i<g->nv; i++) {
-        for (int64_t j=0; j<g->nv; j++) {
-          if (g->edge_storage[i][j].valid) {
-            std::stringstream ss;
-            ss << "<" << i << ">" << " " << j;
-            VLOG(LEVEL) << ss.str();
-          }
+      for (unsigned i = 0; i < g->edge_storage.size(); i++) {
+        for (unsigned j = 0; j < g->edge_storage[i].size(); j++) {
+          LOG(INFO) << "<" << g->owned[i] << ">" << " " <<
+            g->edge_storage[i][j].toId;
         }
       }
     }
 
     template< int LEVEL = 0, typename F = nullptr_t >
     void dump(F print_vertex) {
-      for (int64_t i=0; i<nv; i++) {
-        for (int64_t j=0; j<nv; j++) {
-            if (edge_storage[i][j].valid) {
-            std::stringstream ss;
-            ss << "<" << std::setw(2) << i << ">" << " " << j;
-            print_vertex(ss, vs+i);
-          }
+      for (unsigned i = 0; i < edge_storage.size(); i++) {
+        for (unsigned j = 0; j < edge_storage[i].size(); j++) {
+          std::stringstream ss;
+          ss << "<" << owned[i] << ">" << " " << edge_storage[i][j].toId;
+          print_vertex(ss, vs+owned[i]);
         }
       }
     }
@@ -301,22 +306,11 @@ namespace Grappa {
       if (e.v1 > g->nv) { g->nv = e.v1; }
     });
     on_all_cores([g]{
+      g->self = g;
       g->nv = Grappa::allreduce<int64_t,collective_max>(g->nv) + 1;
-      g->edge_storage = locale_alloc<Edge*>(g->nv);
-      for (size_t i=0; i<g->nv; i++) {
-        g->edge_storage[i] = locale_alloc<Edge>(g->nv);
-      }
-      for (size_t i=0; i<g->nv; i++) {
-        // Edge data is given by applications (default constructor of EdgeData
-        // rather than input data. They're immutable.
-        for (size_t j=0; j<g->nv; j++) {
-          g->edge_storage[i][j] = Edge(i, j);
-        }
-      }
     });
 
     auto vs = global_alloc<Vertex>(g->nv);
-    auto self = g;
     on_all_cores([g,vs]{
       for (Vertex& v : iterate_local(g->vs, g->nv)) {
         new (&v) Vertex();
@@ -324,21 +318,50 @@ namespace Grappa {
     });
     t = walltime();
 
+    // Caculate number of owned vertices for each core.
+    on_all_cores([g] {
+      for (VertexID i = 0; i < g->nv; i++) {
+        if ((g->vs+i).core() == Grappa::mycore()) {
+          g->edge_storage.push_back(std::vector <Edge> ());
+          g->owned.push_back(i);
+        }
+      }
+    });
+
     // Set topology of graph
     on_all_cores([g,tg,directed] {
       for (size_t i=0; i<tg.nedge; i++) {
-        auto e = delegate::read<SyncMode::Blocking,CacheMode::WriteThrough>
-          (tg.edges + i);
-        VertexID s = e.v0;
-        VertexID d = e.v1;
-        CHECK_LT(s, g->nv); CHECK_LT(d, g->nv);
-        if (s != d) {
-          g->edge_storage[s][d].valid = true;
-        }
-        if (s != d && !directed) {
-          g->edge_storage[d][s] = g->edge_storage[s][d];
-        }
+        auto func = [g,tg,directed,i] {
+          auto e = delegate::read<SyncMode::Blocking,CacheMode::WriteThrough>
+            (tg.edges + i);
+          VertexID s = e.v0;
+          VertexID d = e.v1;
+          CHECK_LT(s, g->nv); CHECK_LT(d, g->nv);
+          if ((g->vs+s).core() == Grappa::mycore()) {
+            auto& v = g->edge_storage[g->storage_idx(s)];
+            for (auto i = v.begin(); i != v.end(); i++) {
+              // Replicated Edges!
+              if (d == i->toId) {
+                return;
+              }
+            }
+            v.push_back(Edge(s, d));
+          }
+          if (!directed && (g->vs+d).core() == Grappa::mycore()) {
+            auto& v = g->edge_storage[g->storage_idx(d)];
+            for (auto i = v.begin(); i != v.end(); i++) {
+              // Replicated Edges!
+              if (s == i->toId) {
+                return;
+              }
+            }
+            v.push_back(Edge(d, s));
+          }
+        };
+        spawnRemote<&graph_gce>(Grappa::mycore(), func);
       }
+      // Faster!
+      graph_gce.wait();
     });
 
     VLOG(1) << "-- vertices: " << g->nv;
@@ -346,7 +369,7 @@ namespace Grappa {
     auto gsz = Vertex::global_heap_size()*g->nv
                           + sizeof(Graph) * cores();
     auto lsz = Vertex::locale_heap_size()*g->nv
-                          + (sizeof(Edge))*g->nv*g->nv;
+                          + (sizeof(Edge))*g->nv;
     auto GB = [](size_t v){ return static_cast<double>(v) / (1L<<30); };
     LOG(INFO) << "\nGraph memory breakdown:"
               << "\n  locale_heap_size: " << GB(lsz) << " GB"

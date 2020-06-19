@@ -36,9 +36,10 @@ struct SSSPEdgeData {
   double weight;
   // (source, dest). The value should be agreed by all cores.
   SSSPEdgeData(int i, int j) {
-    int s = ~585 * i + j;
+    int s = (i + ~12)* (i + 0x7)* (j +~12)* (j +0x7)+ ~264;
     weight = hash((char *)&s, sizeof(int)) % 1024;
   }
+  SSSPEdgeData() {}
 };
 
 using G = Graph<SSSPData,SSSPEdgeData>;
@@ -53,7 +54,7 @@ public:
   }
 
   static double get_edge_weight(GlobalAddress<G> g, int64_t i, int64_t j) {
-    return g->edge_storage[i][j].data.weight;
+    return g->get_edge(i, j).data.weight;
   }
 
   static inline int64_t verify(TupleGraph tg, GlobalAddress<G> g, int64_t root) {
