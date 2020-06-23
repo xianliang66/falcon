@@ -6,7 +6,7 @@
 
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 18, "Log2 number of vertices.");
+DEFINE_int32(scale, 16, "Log2 number of vertices.");
 DEFINE_int32(edgefactor, 12, "Average number of edges per vertex.");
 DEFINE_int64(root, 1, "Index of root vertex.");
 

@@ -115,27 +115,60 @@ template< typename T >
 class GlobalAddress {
 #ifdef GRAPPA_TARDIS_CACHE
 public:
-  static Grappa::impl::cache_info<T>& find_cache( const GlobalAddress<T>& g ) {
-    std::map<void*,void*>& tardis_cache = global_communicator.tardis_cache;
+  static Grappa::impl::owner_cache_info& find_owner_ts( const GlobalAddress<T>& g ) {
+    std::map<uintptr_t, Grappa::impl::owner_cache_info>& owner_tardis_cache =
+      global_communicator.owner_tardis_cache;
+    auto iter = owner_tardis_cache.find(g.raw_bits());
+    // Initial cold miss.
+    if (iter == owner_tardis_cache.end()) {
+      owner_tardis_cache[g.raw_bits()] = Grappa::impl::owner_cache_info();
+      return owner_tardis_cache[g.raw_bits()];
+    }
+    return iter->second;
+  }
 
-    void *rawptr = (void *)g.raw_bits();
-    auto it = tardis_cache.find(rawptr);
+  static Grappa::impl::cache_info<T>& find_cache( const GlobalAddress<T>& g,
+      bool* valid = nullptr) {
+    std::map<uintptr_t, void*>& tardis_cache = global_communicator.tardis_cache;
+
+    auto it = tardis_cache.find(g.raw_bits());
+    void *freed_space = nullptr;
     if (it == tardis_cache.end()) {
-      tardis_cache[rawptr] = malloc(sizeof(Grappa::impl::cache_info<T>));
-      if (!tardis_cache[rawptr]) {
-        LOG(ERROR) << "Out of memory!";
-        exit(-1);
+      if (valid != nullptr) {
+        *valid = false;
       }
-      *reinterpret_cast<Grappa::impl::cache_info<T>*>(tardis_cache[rawptr]) =
+      // TODO: LRU eviction
+      /*if (tardis_cache.size() >= MAX_CACHE_NUMBER) {
+        for (int i = 0; i < 10; i++) {
+          auto victim = tardis_cache.begin();
+          freed_space = victim->second;
+          tardis_cache.erase(victim);
+        }
+        //LOG(ERROR) << "Victim! " << tardis_cache.size();
+      }*/
+      if (freed_space == nullptr) {
+        tardis_cache[g.raw_bits()] = malloc(sizeof(Grappa::impl::cache_info<T>));
+        if (!tardis_cache[g.raw_bits()]) {
+          LOG(ERROR) << "Out of memory!";
+          exit(-1);
+        }
+      }
+      else {
+        tardis_cache[g.raw_bits()] = freed_space;
+      }
+      *reinterpret_cast<Grappa::impl::cache_info<T>*>(tardis_cache[g.raw_bits()]) =
         Grappa::impl::cache_info<T>();
-      reinterpret_cast<Grappa::impl::cache_info<T>*>(tardis_cache[rawptr])->core
-        = g.core();
+      return 
+        *reinterpret_cast<Grappa::impl::cache_info<T>*>(tardis_cache[g.raw_bits()]);
+    }
+    if (valid != nullptr) {
+      *valid = true;
     }
     return
-      *(reinterpret_cast<Grappa::impl::cache_info<T>*>(tardis_cache[rawptr]));
+      *(reinterpret_cast<Grappa::impl::cache_info<T>*>(tardis_cache[g.raw_bits()]));
   }
   static void free_cache(void) {
-    std::map<void*,void*>& tardis_cache = global_communicator.tardis_cache;
+    std::map<uintptr_t, void*>& tardis_cache = global_communicator.tardis_cache;
 
     for (auto it = tardis_cache.begin(); it != tardis_cache.end(); it++) {
       free(it->second);
