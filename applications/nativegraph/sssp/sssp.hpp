@@ -17,7 +17,7 @@ struct SSSPData {
     level = 0;
     seen = false;
   }
-};
+} GRAPPA_BLOCK_ALIGNED;
 
 static unsigned long hash(char *s, int l)
 {

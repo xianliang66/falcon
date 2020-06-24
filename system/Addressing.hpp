@@ -40,13 +40,13 @@
 ///
 /// We support two types of global addresses:
 /// -# 2D addresses
-/// -# Linear addresses 
+/// -# Linear addresses
 ///
 /// 2D addresses are a PGAS-style tuple of ( core, address on core )
 ///
 /// Linear addresses are block cyclic across all the cores in the system.
 ///
-/// TODO: update "core" to mean "core" in all the right places.  
+/// TODO: update "core" to mean "core" in all the right places.
 ///
 /// TODO:Some of this code implies that linear addresses have a "pool"
 /// field. This is not how it works right now; instead, all non-tag
@@ -70,7 +70,7 @@ extern void * global_memory_chunk_base;
 
 /// assumes user data will have the top 16 bits all 0.
 
-/// Number of bytes in each block 
+/// Number of bytes in each block
 #define BLOCK_SIZE sizeof(int64_t)*8
 static const int block_size = BLOCK_SIZE;
 
@@ -80,7 +80,7 @@ static const int block_size = BLOCK_SIZE;
 static const int tag_bits = 1;
 /// How many address bits?
 static const int pointer_bits = 48;
-/// How many 
+/// How many
 static const int core_bits = 64 - pointer_bits - tag_bits;
 /// How many bits of memory poll tag? TODO: not currently used.
 static const int pool_bits = 64 - pointer_bits - tag_bits;
@@ -102,7 +102,7 @@ static const intptr_t pointer_mask = (1L << pointer_bits) - 1;
 ///
 /// We support two types of global addresses:
 /// -# 2D addresses
-/// -# Linear addresses 
+/// -# Linear addresses
 ///
 /// 2D addresses are a PGAS-style tuple of ( core, address on core )
 ///
@@ -118,9 +118,11 @@ public:
   static Grappa::impl::owner_cache_info& find_owner_ts( const GlobalAddress<T>& g ) {
     std::map<uintptr_t, Grappa::impl::owner_cache_info>& owner_tardis_cache =
       global_communicator.owner_tardis_cache;
+    //LOG(ERROR) << "Core " << Grappa::mycore() << " find_owner_ts " << g.raw_bits();
     auto iter = owner_tardis_cache.find(g.raw_bits());
     // Initial cold miss.
     if (iter == owner_tardis_cache.end()) {
+     // LOG(ERROR) << "Core " << Grappa::mycore() << " new " << g.raw_bits();
       owner_tardis_cache[g.raw_bits()] = Grappa::impl::owner_cache_info();
       return owner_tardis_cache[g.raw_bits()];
     }
@@ -134,38 +136,30 @@ public:
     auto it = tardis_cache.find(g.raw_bits());
     void *freed_space = nullptr;
     if (it == tardis_cache.end()) {
-      if (valid != nullptr) {
-        *valid = false;
-      }
+      if (valid != nullptr) { *valid = false; }
       // TODO: LRU eviction
-      /*if (tardis_cache.size() >= MAX_CACHE_NUMBER) {
-        for (int i = 0; i < 10; i++) {
-          auto victim = tardis_cache.begin();
-          freed_space = victim->second;
-          tardis_cache.erase(victim);
-        }
-        //LOG(ERROR) << "Victim! " << tardis_cache.size();
-      }*/
+      // TODO: Why free() cannot be called here???
+      // TODO: Why freed_space cannot be reused?
+      if (tardis_cache.size() == MAX_CACHE_NUMBER) {
+        auto victim = tardis_cache.begin();
+        tardis_cache.erase(victim);
+      }
       if (freed_space == nullptr) {
-        tardis_cache[g.raw_bits()] = malloc(sizeof(Grappa::impl::cache_info<T>));
-        if (!tardis_cache[g.raw_bits()]) {
+        freed_space = malloc(sizeof(Grappa::impl::cache_info<T>));
+        if (!freed_space) {
           LOG(ERROR) << "Out of memory!";
           exit(-1);
         }
       }
-      else {
-        tardis_cache[g.raw_bits()] = freed_space;
-      }
-      *reinterpret_cast<Grappa::impl::cache_info<T>*>(tardis_cache[g.raw_bits()]) =
+      tardis_cache[g.raw_bits()] = freed_space;
+      *reinterpret_cast<Grappa::impl::cache_info<T>*>(freed_space) =
         Grappa::impl::cache_info<T>();
-      return 
-        *reinterpret_cast<Grappa::impl::cache_info<T>*>(tardis_cache[g.raw_bits()]);
+      return
+        *reinterpret_cast<Grappa::impl::cache_info<T>*>(freed_space);
     }
-    if (valid != nullptr) {
-      *valid = true;
-    }
+    if (valid != nullptr) { *valid = true; }
     return
-      *(reinterpret_cast<Grappa::impl::cache_info<T>*>(tardis_cache[g.raw_bits()]));
+      *(reinterpret_cast<Grappa::impl::cache_info<T>*>(it->second));
   }
   static void free_cache(void) {
     std::map<uintptr_t, void*>& tardis_cache = global_communicator.tardis_cache;
@@ -188,13 +182,13 @@ private:
   /// Output global address in human-readable form
   std::ostream& dump( std::ostream& o ) const {
     if( is_2D() ) {
-      return o << "<GA 2D " << (void*)storage_ 
-               << ": core " << core() 
+      return o << "<GA 2D " << (void*)storage_
+               << ": core " << core()
                << " pointer " << static_cast<void *>( pointer() )
                << ">";
     } else {
-        return o << "<GA Linear " << (void*)storage_ 
-//                 << ": pool " << pool() 
+        return o << "<GA Linear " << (void*)storage_
+//                 << ": pool " << pool()
                  << " core " << core()
                  << " pointer " << static_cast<void *>( pointer()  )
                  << ">";
@@ -232,7 +226,7 @@ public:
   static GlobalAddress Linear( T * t, Pool p = 0 )
   {
     // adjust for chunk offset
-    intptr_t tt = reinterpret_cast< intptr_t >( t ) - 
+    intptr_t tt = reinterpret_cast< intptr_t >( t ) -
       reinterpret_cast< intptr_t >( Grappa::impl::global_memory_chunk_base );
 
     intptr_t offset = tt % block_size;
@@ -240,9 +234,9 @@ public:
     // intptr_t core_from_address = block % global_communicator.cores;
     // CHECK_EQ( core_from_address, 0 ) << "Core from address should be zero. (Check alignment?)";
     intptr_t ga = ( block * global_communicator.cores + global_communicator.mycore ) * block_size + offset;
-    
+
     T * ttt = reinterpret_cast< T * >( ga );
-    
+
     GlobalAddress g;
     g.storage_ = ( ( 0L << tag_shift_val ) |
                    //( ( n & core_mask) << core_shift_val ) |
@@ -250,7 +244,7 @@ public:
 
     CHECK_EQ( g.core(), global_communicator.mycore ) << "converted linear address core doesn't match";
     CHECK_EQ( g.pointer(), t ) << "converted linear address local pointer doesn't match";
-    
+
     return g;
   }
 
@@ -285,25 +279,25 @@ public:
     return core() == Grappa::mycore();
   }
 #endif
-  
+
   /// Return the home core of a global address
   /// TODO: implement this.
   inline Pool pool() const {
     CHECK( false ) << "Not implemented.";
     return (storage_ >> pool_shift_val) & pool_mask;
   }
-    
+
   /// Return the local pointer from a global address
-  inline T * pointer() const { 
+  inline T * pointer() const {
     if( is_2D() ) {
       intptr_t signextended = (storage_ << pointer_shift_val) >> pointer_shift_val;
-      return reinterpret_cast< T * >( signextended ); 
+      return reinterpret_cast< T * >( signextended );
     } else {
       intptr_t offset = storage_ % block_size;
       intptr_t block = (storage_ / block_size);
       intptr_t core = (storage_ / block_size) % global_communicator.cores;
       intptr_t core_block = (storage_ / block_size) / global_communicator.cores;
-      intptr_t address = core_block * block_size + offset + 
+      intptr_t address = core_block * block_size + offset +
         reinterpret_cast< intptr_t >( Grappa::impl::global_memory_chunk_base );
       return reinterpret_cast< T * >( address );
     }
@@ -313,7 +307,7 @@ public:
   /// for PGAS-style local iteration.
   inline T * localize(Core nid = -1) const {
     if (is_2D()) return pointer();
-    
+
   	if (nid == -1) nid = global_communicator.mycore;
     T * local_base;
     size_t block_elems = block_size / sizeof(T);
@@ -327,7 +321,7 @@ public:
     }
     return local_base;
   }
-  
+
   /// Does @b not remotely dereference the global address, this is syntactic sugar for `localize()->`
   ///
   /// @code
@@ -339,7 +333,7 @@ public:
   T* operator->() const { return localize(); }
 
   /// Find base address of block containing this byte.
-  inline GlobalAddress< T > block_min() const { 
+  inline GlobalAddress< T > block_min() const {
     if( is_2D() ) {
       //intptr_t signextended = (storage_ << pointer_shift_val) >> pointer_shift_val;
       //GlobalAddress< U > u = GlobalAddress< U >::Raw( storage_ );
@@ -354,20 +348,20 @@ public:
   }
 
   /// find global byte address of first byte of block
-  inline GlobalAddress< char > first_byte() const { 
+  inline GlobalAddress< char > first_byte() const {
     return GlobalAddress< char >::Raw( this->raw_bits() );
   }
 
   /// find global byte address of last byte of block
-  inline GlobalAddress< char > last_byte() const { 
+  inline GlobalAddress< char > last_byte() const {
     return GlobalAddress< char >::Raw( this->raw_bits() + sizeof(T) - 1 );
   }
 
   // base address of block after the one containing the last byte of this object
-  inline GlobalAddress< T > block_max() const { 
+  inline GlobalAddress< T > block_max() const {
     if( is_2D() ) {
       intptr_t signextended = (storage_ << pointer_shift_val) >> pointer_shift_val;
-      //return reinterpret_cast< T * >( -1 ); 
+      //return reinterpret_cast< T * >( -1 );
       return GlobalAddress< T >::TwoDimensional( (T*) 1, core() );
     } else {
       intptr_t first_byte = storage_;
@@ -382,7 +376,7 @@ public:
 
   /// is this a 2D address?
   inline bool is_2D() const {
-    return storage_ & tag_mask; 
+    return storage_ & tag_mask;
   }
 
   /// is this a linear address?
@@ -396,10 +390,10 @@ public:
 
   /// increment address by one T
   inline GlobalAddress< T >& operator++() {
-    storage_ += sizeof(T); 
+    storage_ += sizeof(T);
     return *this;
   }
-  
+
   /// increment address by one T
   inline GlobalAddress< T > operator++(int) {
     GlobalAddress<T> result = *this;
@@ -408,22 +402,22 @@ public:
   }
 
   /// decrement address by one T
-  inline GlobalAddress< T >& operator--() { 
-    storage_ -= sizeof(T); 
-    return *this; 
+  inline GlobalAddress< T >& operator--() {
+    storage_ -= sizeof(T);
+    return *this;
   }
-  
+
   //inline GlobalAddress< T > operator--(int i) { return storage_ ++ i; }
   /// increment address by i T's
-  inline GlobalAddress< T >& operator+=(ptrdiff_t i) { 
-    storage_ += i * sizeof(T); 
-    return *this; 
+  inline GlobalAddress< T >& operator+=(ptrdiff_t i) {
+    storage_ += i * sizeof(T);
+    return *this;
   }
 
   /// decrement address by i T's
-  inline GlobalAddress< T >& operator-=(ptrdiff_t i) { 
-    storage_ -= i * sizeof(T); 
-    return *this; 
+  inline GlobalAddress< T >& operator-=(ptrdiff_t i) {
+    storage_ -= i * sizeof(T);
+    return *this;
   }
 
   /// test for equality
@@ -443,13 +437,13 @@ public:
   bool operator==( const GlobalAddress< U >& u ) const {
     return raw_bits() == u.raw_bits();
   }
-  
+
   /// compare addresses
   bool operator<(const GlobalAddress<T>& t) const {
     return raw_bits() < t.raw_bits();
   }
 
-  //T& operator[]( ptrdiff_t index ) { return 
+  //T& operator[]( ptrdiff_t index ) { return
 
   /// generic cast operator
   template< typename U >
@@ -493,7 +487,7 @@ GlobalAddress< T > operator-( const GlobalAddress< T >& t, ptrdiff_t i ) {
 /// how many T's different are t and u?
 template< typename T >
 inline ptrdiff_t operator-( const GlobalAddress< T >& t, const GlobalAddress< T >& u ) {
-  //LOG(WARNING) << "Danger! You probably don't want to call this function. " 
+  //LOG(WARNING) << "Danger! You probably don't want to call this function. "
 		   //<< "Try using .first_byte() or .last_byte() to get the right overload";
   return (t.raw_bits() - u.raw_bits())/sizeof(T);
 }

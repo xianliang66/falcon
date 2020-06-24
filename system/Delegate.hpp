@@ -122,8 +122,7 @@ namespace Grappa {
     enum CacheState { Owner, Hit, Expired, Miss };
 
     template <typename T>
-    CacheState try_read_cache(const GlobalAddress<T>& t, bool valid) {
-      cache_info<T>& mycache = GlobalAddress<T>::find_cache(t);
+    CacheState try_read_cache(const impl::cache_info<T>& mycache, bool valid) {
       if (!valid) {
         delegate_cache_miss++;
         return CacheState::Miss;
@@ -317,7 +316,7 @@ namespace Grappa {
 
       bool valid;
       impl::cache_info<T>& mycache = GlobalAddress<T>::find_cache(target, &valid);
-      if (try_read_cache(target, valid) == CacheState::Hit) {
+      if (try_read_cache(mycache, valid) == CacheState::Hit) {
         LOG(INFO) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
           << " #" << delegate_reads << " read wts "
           << mycache.wts << " rts " << mycache.rts << " pts " << Grappa::mypts() << " owner:" << target.core();

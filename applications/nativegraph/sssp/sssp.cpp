@@ -6,7 +6,7 @@
 
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 16, "Log2 number of vertices.");
+DEFINE_int32(scale, 12, "Log2 number of vertices.");
 DEFINE_int32(edgefactor, 12, "Average number of edges per vertex.");
 DEFINE_int64(root, 1, "Index of root vertex.");
 
@@ -23,6 +23,7 @@ GRAPPA_DEFINE_METRIC(SimpleMetric<double>, verify_time, 0);
 void dump_sssp_graph(GlobalAddress<G> &g);
 
 enum thread_state { INIT = 0x0, RUNNING = 0xBA, UPDATE = 0xCA, TERMINATE = 0xFF };
+
 static bool terminated(GlobalAddress<thread_state> complete_addr) {
   if (delegate::read(complete_addr) != INIT) {
     on_all_cores([complete_addr] {
