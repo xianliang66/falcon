@@ -221,7 +221,7 @@ namespace Grappa {
           return i;
         }
       }
-      CHECK(0);
+      CHECK(0) << "Vertex " << v << " doesn't exist.";
     }
 
     std::vector<VertexID> get_adj(VertexID id) {
@@ -234,6 +234,7 @@ namespace Grappa {
     }
 
     Edge get_edge(VertexID s, VertexID d) {
+      CHECK(s != d);
       auto self = this->self;
       return delegate::call((vs+s).core(), [self, s, d] {
         auto adj = self->edge_storage[self->storage_idx(s)];
@@ -242,7 +243,7 @@ namespace Grappa {
             return *i;
           }
         }
-        CHECK(0);
+        CHECK(0) << "Edge " << s << "==" << d << " doesn't exist.";
       });
     }
 
@@ -336,6 +337,10 @@ namespace Grappa {
             (tg.edges + i);
           VertexID s = e.v0;
           VertexID d = e.v1;
+          // No self loops
+          if (s == d) {
+            return;
+          }
           CHECK_LT(s, g->nv); CHECK_LT(d, g->nv);
           if ((g->vs+s).core() == Grappa::mycore()) {
             auto& v = g->edge_storage[g->storage_idx(s)];
@@ -358,9 +363,9 @@ namespace Grappa {
             v.push_back(Edge(d, s));
           }
         };
+        // Faster!
         spawnRemote<&graph_gce>(Grappa::mycore(), func);
       }
-      // Faster!
       graph_gce.wait();
     });
 

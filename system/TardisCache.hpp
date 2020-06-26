@@ -19,12 +19,21 @@ struct owner_cache_info {
   mutable timestamp_t rts, wts;
 };
 
-template< typename T >
 struct cache_info {
-  cache_info() : rts(0), wts(0) {}
-  cache_info(timestamp_t _rts, timestamp_t _wts) : rts(_rts), wts(_wts) {}
+  cache_info() : rts(0), wts(0), refcnt(0), size(0), object(nullptr) {}
+  cache_info(timestamp_t _rts, timestamp_t _wts) : rts(_rts), wts(_wts),
+    refcnt(0), size(0), object(nullptr) {}
+  cache_info(void* obj, size_t sz) : object(obj), size(sz), rts(0), wts(0),
+    refcnt(0) {}
   mutable timestamp_t rts, wts;
-  mutable T object;
+  mutable char refcnt;
+  mutable size_t size;
+  mutable void* object;
+
+  void assign(void* obj) {
+    memcpy(object, obj, size);
+  }
+  void* get_object() { return object; }
 };
 
 template< typename T >

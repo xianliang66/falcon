@@ -66,6 +66,7 @@
 
 #include <mpi.h>
 #include <memory>
+#include <unordered_map>
 #include <deque>
 
 #ifdef VTRACE
@@ -120,9 +121,9 @@ class Communicator {
 #ifdef GRAPPA_TARDIS_CACHE
 public:
   // storage_->(rts, wts)
-  std::map<uintptr_t, Grappa::impl::owner_cache_info> owner_tardis_cache;
+  std::unordered_map<uintptr_t, Grappa::impl::owner_cache_info> owner_tardis_cache;
   // storage_->cache_info<T>, where T might be different types.
-  std::map<uintptr_t, void*> tardis_cache;
+  std::unordered_map<uintptr_t, Grappa::impl::cache_info> tardis_cache;
 #endif
 private:
   DISALLOW_COPY_AND_ASSIGN( Communicator );

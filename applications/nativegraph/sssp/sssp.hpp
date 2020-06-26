@@ -17,7 +17,7 @@ struct SSSPData {
     level = 0;
     seen = false;
   }
-} GRAPPA_BLOCK_ALIGNED;
+};
 
 static unsigned long hash(char *s, int l)
 {
@@ -74,18 +74,18 @@ public:
       auto wij = get_edge_weight(g,i,j), wji = get_edge_weight(g,j,i);
       CHECK(!((di < dj) && ((di + wij) < dj))) << "Error, distance of the nearest neighbor is too great :"
         << "(" << i << "," << di << ")" << "--" << wij << "-->" <<
-        "(" << j << "," << dj << ") by Core " << Grappa::mycore();
+        "(" << j << "," << dj << ") by Core " << Grappa::mycore() << "(" << Grappa::mypts() << ")";
       CHECK(!((dj < di) && ((dj + wji) < di))) << "Error, distance of the nearest neighbor is too great : "
         << "(" << j << "," << dj << ")" << "--" << wji << "-->" <<
-        "(" << i << "," << di << ") by Core " << Grappa::mycore();
+        "(" << i << "," << di << ") by Core " << Grappa::mycore() << "(" << Grappa::mypts() << ")";
       CHECK(!((i == tj) && ((di + wij) != dj))) << "Error, distance of the child vertex is not equil to "
         << "sum of its parent distance and edge weight :"
         << "(" << i << "," << di << ")" << "--" << wij << "-->" <<
-        "(" << j << "," << dj << ") by Core " << Grappa::mycore();
+        "(" << j << "," << dj << ") by Core " << Grappa::mycore() << "(" << Grappa::mypts() << ")";
       CHECK(!((j == ti) && ((dj + wji) != di))) << "Error, distance of the child vertex is not equil to "
         << "sum of its parent distance and edge weight :"
         << "(" << j << "," << dj << ")" << "--" << wji << "-->" <<
-        "(" << j << "," << dj << ") by Core " << Grappa::mycore();
+        "(" << i << "," << di << ") by Core " << Grappa::mycore() << "(" << Grappa::mypts() << ")";
     });
 
     // everything checked out!

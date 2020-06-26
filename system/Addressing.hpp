@@ -116,22 +116,21 @@ class GlobalAddress {
 #ifdef GRAPPA_TARDIS_CACHE
 public:
   static Grappa::impl::owner_cache_info& find_owner_ts( const GlobalAddress<T>& g ) {
-    std::map<uintptr_t, Grappa::impl::owner_cache_info>& owner_tardis_cache =
+    std::unordered_map<uintptr_t, Grappa::impl::owner_cache_info>& owner_tardis_cache =
       global_communicator.owner_tardis_cache;
-    //LOG(ERROR) << "Core " << Grappa::mycore() << " find_owner_ts " << g.raw_bits();
     auto iter = owner_tardis_cache.find(g.raw_bits());
     // Initial cold miss.
     if (iter == owner_tardis_cache.end()) {
-     // LOG(ERROR) << "Core " << Grappa::mycore() << " new " << g.raw_bits();
       owner_tardis_cache[g.raw_bits()] = Grappa::impl::owner_cache_info();
       return owner_tardis_cache[g.raw_bits()];
     }
     return iter->second;
   }
 
-  static Grappa::impl::cache_info<T>& find_cache( const GlobalAddress<T>& g,
+  static Grappa::impl::cache_info& find_cache( const GlobalAddress<T>& g,
       bool* valid = nullptr) {
-    std::map<uintptr_t, void*>& tardis_cache = global_communicator.tardis_cache;
+    std::unordered_map<uintptr_t, Grappa::impl::cache_info>& tardis_cache =
+      global_communicator.tardis_cache;
 
     auto it = tardis_cache.find(g.raw_bits());
     void *freed_space = nullptr;
@@ -140,33 +139,53 @@ public:
       // TODO: LRU eviction
       // TODO: Why free() cannot be called here???
       // TODO: Why freed_space cannot be reused?
-      if (tardis_cache.size() == MAX_CACHE_NUMBER) {
+      /*if (tardis_cache.size() == MAX_CACHE_NUMBER) {
         auto victim = tardis_cache.begin();
-        tardis_cache.erase(victim);
-      }
-      if (freed_space == nullptr) {
-        freed_space = malloc(sizeof(Grappa::impl::cache_info<T>));
-        if (!freed_space) {
-          LOG(ERROR) << "Out of memory!";
-          exit(-1);
+        while (victim != tardis_cache.end() && victim->second.refcnt != 0)
+          victim++;
+        if (victim != tardis_cache.end()) {
+          if (victim->second.size == sizeof(T)) {
+            freed_space = victim->second.object;
+          }
+          else {
+            free(victim->second.object);
+          }
+          tardis_cache.erase(victim);
         }
+      }*/
+
+      if (freed_space == nullptr) {
+        freed_space = malloc(sizeof(T));
+        CHECK(freed_space != nullptr);
       }
-      tardis_cache[g.raw_bits()] = freed_space;
-      *reinterpret_cast<Grappa::impl::cache_info<T>*>(freed_space) =
-        Grappa::impl::cache_info<T>();
-      return
-        *reinterpret_cast<Grappa::impl::cache_info<T>*>(freed_space);
+      auto& r = tardis_cache[g.raw_bits()] =
+        Grappa::impl::cache_info(freed_space, sizeof(T));
+      return r;
     }
     if (valid != nullptr) { *valid = true; }
-    return
-      *(reinterpret_cast<Grappa::impl::cache_info<T>*>(it->second));
+    CHECK(it->second.size == sizeof(T));
+    return it->second;
   }
+
+  /*
+   * refcnt is co-routine's lock. Make sure there is only one task accesses one
+   * object at a time.
+   */
+  static void active_cache( Grappa::impl::cache_info& mycache ) {
+    mycache.refcnt++;
+  }
+
+  static void deactive_cache( Grappa::impl::cache_info& mycache ) {
+    mycache.refcnt--;
+  }
+
   static void free_cache(void) {
-    std::map<uintptr_t, void*>& tardis_cache = global_communicator.tardis_cache;
+    std::unordered_map<uintptr_t, Grappa::impl::cache_info>& tardis_cache =
+      global_communicator.tardis_cache;
 
     for (auto it = tardis_cache.begin(); it != tardis_cache.end(); it++) {
-      free(it->second);
-      it->second = nullptr;
+      free(it->second.object);
+      it->second.object = nullptr;
     }
   }
 private:
