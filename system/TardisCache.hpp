@@ -2,11 +2,11 @@
 #include <iostream>
 
 /// Whether the delegate operations use Tardis-based cache.
-//#define GRAPPA_TARDIS_CACHE
+#define GRAPPA_TARDIS_CACHE
 
 #ifdef GRAPPA_TARDIS_CACHE
 #define LEASE 10
-#define MAX_CACHE_NUMBER 1024
+#define MAX_CACHE_NUMBER 10240
 
 typedef uint32_t timestamp_t;
 typedef int16_t Core;
@@ -20,13 +20,16 @@ struct owner_cache_info {
 };
 
 struct cache_info {
-  cache_info() : rts(0), wts(0), refcnt(0), size(0), object(nullptr) {}
+  cache_info() : rts(0), wts(0), refcnt(0), usedcnt(0), size(0), object(nullptr) {}
   cache_info(timestamp_t _rts, timestamp_t _wts) : rts(_rts), wts(_wts),
-    refcnt(0), size(0), object(nullptr) {}
+    refcnt(0), usedcnt(0), size(0), object(nullptr) {}
   cache_info(void* obj, size_t sz) : object(obj), size(sz), rts(0), wts(0),
-    refcnt(0) {}
+    refcnt(0), usedcnt(0) {}
   mutable timestamp_t rts, wts;
+  // How many actived tasks (might access internal data of cache_info) are there?
   mutable char refcnt;
+  // How many tasks who holds the reference to cache_info are there?
+  mutable char usedcnt;
   mutable size_t size;
   mutable void* object;
 

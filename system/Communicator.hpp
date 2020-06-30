@@ -68,6 +68,7 @@
 #include <memory>
 #include <unordered_map>
 #include <deque>
+#include <list>
 
 #ifdef VTRACE
 #include <vt_user.h>
@@ -124,6 +125,8 @@ public:
   std::unordered_map<uintptr_t, Grappa::impl::owner_cache_info> owner_tardis_cache;
   // storage_->cache_info<T>, where T might be different types.
   std::unordered_map<uintptr_t, Grappa::impl::cache_info> tardis_cache;
+  // Last element is most frequently used.
+  std::list<uintptr_t> lru;
 #endif
 private:
   DISALLOW_COPY_AND_ASSIGN( Communicator );

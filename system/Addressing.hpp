@@ -56,6 +56,8 @@
 #include "Communicator.hpp"
 #include "TardisCache.hpp"
 
+#include <list>
+
 typedef int Pool;
 
 
@@ -131,39 +133,44 @@ public:
       bool* valid = nullptr) {
     std::unordered_map<uintptr_t, Grappa::impl::cache_info>& tardis_cache =
       global_communicator.tardis_cache;
+    std::list<uintptr_t>& lru = global_communicator.lru;
 
     auto it = tardis_cache.find(g.raw_bits());
     void *freed_space = nullptr;
     if (it == tardis_cache.end()) {
       if (valid != nullptr) { *valid = false; }
-      // TODO: LRU eviction
-      // TODO: Why free() cannot be called here???
-      // TODO: Why freed_space cannot be reused?
-      /*if (tardis_cache.size() == MAX_CACHE_NUMBER) {
-        auto victim = tardis_cache.begin();
-        while (victim != tardis_cache.end() && victim->second.refcnt != 0)
+      // TODO: Batched eviction
+      if (lru.size() == MAX_CACHE_NUMBER) {
+        auto victim = lru.begin();
+        while (victim != lru.end() && tardis_cache[*victim].usedcnt > 0)
           victim++;
-        if (victim != tardis_cache.end()) {
-          if (victim->second.size == sizeof(T)) {
-            freed_space = victim->second.object;
-          }
-          else {
-            free(victim->second.object);
-          }
-          tardis_cache.erase(victim);
+        CHECK(victim != lru.end());
+        auto& v = tardis_cache[*victim];
+        if (v.size == sizeof(T)) {
+          freed_space = v.object;
         }
-      }*/
+        else {
+          free(v.object);
+        }
+        lru.erase(victim);
+        tardis_cache.erase(tardis_cache.find(*victim));
+      }
 
       if (freed_space == nullptr) {
         freed_space = malloc(sizeof(T));
         CHECK(freed_space != nullptr);
       }
+      lru.push_back(g.raw_bits());
       auto& r = tardis_cache[g.raw_bits()] =
         Grappa::impl::cache_info(freed_space, sizeof(T));
+      r.usedcnt++;
+
       return r;
     }
     if (valid != nullptr) { *valid = true; }
-    CHECK(it->second.size == sizeof(T));
+    lru.erase(std::find(lru.begin(), lru.end(), g.raw_bits()));
+    lru.push_back(g.raw_bits());
+    it->second.usedcnt++;
     return it->second;
   }
 
@@ -175,8 +182,10 @@ public:
     mycache.refcnt++;
   }
 
+  // After this, the reference might become invalid.
   static void deactive_cache( Grappa::impl::cache_info& mycache ) {
     mycache.refcnt--;
+    mycache.usedcnt--;
   }
 
   static void free_cache(void) {
