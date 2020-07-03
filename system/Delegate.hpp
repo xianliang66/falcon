@@ -118,14 +118,16 @@ namespace Grappa {
 
   namespace delegate {
 
-#ifdef GRAPPA_TARDIS_CACHE
-    enum CacheState { Owner, Hit, Expired, Miss };
-
+#ifdef GRAPPA_CACHE_ENABLE
     static void verify_cache(const impl::cache_info& mycache) {
       while (mycache.refcnt > 0)
         // Grappa::yield cannot be called in Addressing.hpp
         Grappa::yield();
     }
+#endif
+
+#ifdef GRAPPA_TARDIS_CACHE
+    enum CacheState { Owner, Hit, Expired, Miss };
 
     static CacheState try_read_cache(const impl::cache_info& mycache,
         bool valid) {
@@ -301,16 +303,19 @@ namespace Grappa {
     T read(GlobalAddress<T> target) {
       delegate_reads++;
 
-#ifdef GRAPPA_TARDIS_CACHE
+#ifdef GRAPPA_CACHE_ENABLE
       if (M == CacheMode::WriteThrough) {
         return internal_call<S,C>(target.core(), [target]() -> T {
           delegate_read_targets++;
           return *target.pointer();
         });
       }
+#endif // GRAPPA_CACHE_ENABLE
 
+#ifdef GRAPPA_TARDIS_CACHE
       if (target.is_owner()) {
-        auto& owner_ts = GlobalAddress<T>::find_owner_ts(target);
+        auto& owner_ts = GlobalAddress<T>::find_owner_info(target);
+
         /*LOG(INFO) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
           << " #" << delegate_reads << " read wts " << owner_ts.wts << " rts "
           << owner_ts.rts << " pts " << Grappa::mypts() << " owner:" << target.core();*/
@@ -335,7 +340,7 @@ namespace Grappa {
       auto r = internal_call<S,C>(target.core(), [target, pts]() {
         delegate_read_targets++;
 
-        auto& owner_ts = GlobalAddress<T>::find_owner_ts(target);
+        auto& owner_ts = GlobalAddress<T>::find_owner_info(target);
         owner_ts.rts = std::max<timestamp_t>(std::max<timestamp_t>(
               owner_ts.rts, owner_ts.wts + LEASE), (pts + LEASE));
         return impl::rpc_read_result<T>(*target.pointer(), owner_ts);
@@ -349,6 +354,48 @@ namespace Grappa {
         << mycache.wts << " rts " << mycache.rts << " pts " << Grappa::mypts();*/
       GlobalAddress<T>::deactive_cache(mycache);
       return r.r;
+#elif (defined(GRAPPA_WI_CACHE) || defined(GRAPPA_WB_CACHE))
+      if (target.is_owner()) {
+        auto& owner_ts = GlobalAddress<T>::find_owner_info(target);
+        while (owner_ts.locked) {
+          Grappa::yield();
+        }
+        return *target.pointer();
+      }
+
+      bool valid;
+      impl::cache_info& mycache = GlobalAddress<T>::find_cache(target, &valid);
+      verify_cache(mycache);
+      GlobalAddress<T>::active_cache(mycache);
+      if (valid && mycache.valid) {
+        /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
+          << " read hits.";*/
+        delegate_cache_hit++;
+        GlobalAddress<T>::deactive_cache(mycache);
+        return *(T*)mycache.get_object();
+      }
+      /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
+        << " read misses";*/
+      delegate_cache_miss++;
+
+      Core my = Grappa::mycore();
+
+retry:
+      auto r = internal_call<S,C>(target.core(), [my, target]() {
+        delegate_read_targets++;
+
+        auto& info = GlobalAddress<T>::find_owner_info(target);
+        if (!info.locked) {
+          info.copyset[my] = true;
+        }
+        return lock_obj<T>{ *target.pointer(), info.locked };
+      });
+      if (r.locked)
+        goto retry;
+      mycache.valid = true;
+      mycache.assign(&r.object);
+      GlobalAddress<T>::deactive_cache(mycache);
+      return r.object;
 #else
       return internal_call<S,C>(target.core(), [target]() -> T {
         delegate_read_targets++;
@@ -376,19 +423,21 @@ namespace Grappa {
     void write(GlobalAddress<T> target, U value) {
       static_assert(std::is_convertible<T,U>(), "type of value must match GlobalAddress type");
       delegate_writes++;
-#ifdef GRAPPA_TARDIS_CACHE
+#ifdef GRAPPA_CACHE_ENABLE
       if (M == CacheMode::WriteThrough) {
         internal_call<S,C>(target.core(), [target, value]() -> T {
           delegate_write_targets++;
           *target.pointer() = value;
         });
       }
+#endif // GRAPPA_CACHE_ENABLE
 
+#ifdef GRAPPA_TARDIS_CACHE
       if (target.is_owner()) {
-        auto& owner_ts = GlobalAddress<T>::find_owner_ts(target);
+        auto& owner_ts = GlobalAddress<T>::find_owner_info(target);
         timestamp_t ts = std::max<timestamp_t>(Grappa::mypts(), owner_ts.rts + 1);
         Grappa::mypts() = owner_ts.rts = owner_ts.wts = ts;
-        /// Update my own cache or owner storage.
+        /// Update owner storage.
         *target.pointer() = value;
         /*LOG(INFO) << "Core " << Grappa::mycore() << "(O) ptr " << target.raw_bits()
           << " #" << delegate_writes << " write wts "
@@ -402,7 +451,7 @@ namespace Grappa {
       auto r = internal_call<S,C>(target.core(), [target, value] {
         delegate_write_targets++;
 
-        auto& owner_ts = GlobalAddress<T>::find_owner_ts(target);
+        auto& owner_ts = GlobalAddress<T>::find_owner_info(target);
         timestamp_t ts = std::max<timestamp_t>(Grappa::mypts(), owner_ts.rts + 1);
         Grappa::mypts() = owner_ts.wts = owner_ts.rts = ts;
         *target.pointer() = value;
@@ -415,7 +464,88 @@ namespace Grappa {
         << " #" << delegate_writes << " write wts "
         << mycache.wts << " rts " << mycache.rts << " pts " << Grappa::mypts();*/
       GlobalAddress<T>::deactive_cache(mycache);
-#else
+#elif defined(GRAPPA_WI_CACHE)
+      if (target.is_owner()) {
+        auto& info = GlobalAddress<T>::find_owner_info(target);
+
+        while (info.locked) {
+          Grappa::yield();
+        }
+        /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
+          << " write as owner.";*/
+        info.locked = true;
+
+        // Broadcast invalidation messages according to the copyset.
+        for (int i = 0; i < info.copyset.size(); i++) {
+          if (info.copyset[i] && Grappa::mycore() != i) {
+            auto r = internal_call<S,C>((Core)i, [target, value] {
+              bool valid;
+              auto& mycache = GlobalAddress<T>::find_cache(target, &valid, false);
+              if (!valid) {
+                return false;
+              }
+              else {
+                mycache.valid = false;
+                return true;
+              }
+            });
+            /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
+              << " sends INV as owner to Core " << i << " with result " << r;*/
+            if (!r) info.copyset[i] = false;
+          }
+        }
+
+        info.locked = false;
+        *target.pointer() = value;
+      }
+
+      impl::cache_info& mycache = GlobalAddress<T>::find_cache(target);
+      verify_cache(mycache);
+      GlobalAddress<T>::active_cache(mycache);
+
+      /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
+        << " write as non-owner.";*/
+      // Embedded delegataions are disallowed in Grappa.
+      // Lock this object.
+      auto cpyset = internal_call<S,C>(target.core(), [target] {
+        auto& info = GlobalAddress<T>::find_owner_info(target);
+        info.locked = true;
+        return info.copyset;
+      });
+      // Broadcast invalidation messages according to the copyset.
+      for (int i = 0; i < cpyset.size(); i++) {
+        if (cpyset[i] && i != Grappa::mycore()) {
+          auto r = internal_call<S,C>((Core)i, [target, value] {
+            bool valid;
+            auto& mycache = GlobalAddress<T>::find_cache(target, &valid, false);
+            if (!valid) {
+              return false;
+            }
+            else {
+              mycache.valid = false;
+              return true;
+            }
+          });
+          /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
+            << " sends INV as non-owner to Core " << i << " with result " << r;*/
+          if (!r) cpyset[i] = false;
+        }
+      }
+      cpyset[Grappa::mycore()] = true;
+      // Unlock this object and update the copyset.
+      internal_call<S,C>(target.core(), [target, value, cpyset] {
+        delegate_write_targets++;
+
+        auto& info = GlobalAddress<T>::find_owner_info(target);
+        info.copyset = cpyset;
+        info.locked = false;
+        *target.pointer() = value;
+      });
+      mycache.valid = true;
+      mycache.assign(&value);
+      GlobalAddress<T>::deactive_cache(mycache);
+#elif defined(GRAPPA_WB_CACHE)
+#else // Vanilla Grappa
       internal_call<S,C>(target.core(), [target, value]() -> T {
         delegate_write_targets++;
         *target.pointer() = value;

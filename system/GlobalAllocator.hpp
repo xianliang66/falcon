@@ -155,7 +155,7 @@ GlobalAddress<T> global_alloc(size_t count) {
 /// Free memory allocated from global shared heap.
 template< typename T >
 void global_free(GlobalAddress<T> address) {
-#ifdef GRAPPA_TARDIS_CACHE
+#ifdef GRAPPA_CACHE_ENABLE
   GlobalAddress<T>::free_cache();
 #endif
   GlobalAllocator::remote_free(static_cast<GlobalAddress<void>>(address));

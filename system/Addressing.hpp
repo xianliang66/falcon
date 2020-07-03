@@ -115,9 +115,9 @@ void write_core();
 
 template< typename T >
 class GlobalAddress {
-#ifdef GRAPPA_TARDIS_CACHE
 public:
-  static Grappa::impl::owner_cache_info& find_owner_ts( const GlobalAddress<T>& g ) {
+#ifdef GRAPPA_CACHE_ENABLE
+  static Grappa::impl::owner_cache_info& find_owner_info( const GlobalAddress<T>& g ) {
     std::unordered_map<uintptr_t, Grappa::impl::owner_cache_info>& owner_tardis_cache =
       global_communicator.owner_tardis_cache;
     auto iter = owner_tardis_cache.find(g.raw_bits());
@@ -130,7 +130,7 @@ public:
   }
 
   static Grappa::impl::cache_info& find_cache( const GlobalAddress<T>& g,
-      bool* valid = nullptr) {
+      bool* valid = nullptr, bool insert_new = true) {
     std::unordered_map<uintptr_t, Grappa::impl::cache_info>& tardis_cache =
       global_communicator.tardis_cache;
     std::list<uintptr_t>& lru = global_communicator.lru;
@@ -139,21 +139,24 @@ public:
     void *freed_space = nullptr;
     if (it == tardis_cache.end()) {
       if (valid != nullptr) { *valid = false; }
+      // Return a stub
+      if (!insert_new) { return tardis_cache.begin()->second; }
       // TODO: Batched eviction
-      if (lru.size() == MAX_CACHE_NUMBER) {
+      if (lru.size() >= MAX_CACHE_NUMBER) {
         auto victim = lru.begin();
         while (victim != lru.end() && tardis_cache[*victim].usedcnt > 0)
           victim++;
-        CHECK(victim != lru.end());
-        auto& v = tardis_cache[*victim];
-        if (v.size == sizeof(T)) {
-          freed_space = v.object;
+        if (victim != lru.end()) {
+          auto& v = tardis_cache[*victim];
+          if (v.size == sizeof(T)) {
+            freed_space = v.object;
+          }
+          else {
+            free(v.object);
+          }
+          lru.erase(victim);
+          tardis_cache.erase(tardis_cache.find(*victim));
         }
-        else {
-          free(v.object);
-        }
-        lru.erase(victim);
-        tardis_cache.erase(tardis_cache.find(*victim));
       }
 
       if (freed_space == nullptr) {
@@ -168,7 +171,7 @@ public:
       return r;
     }
     if (valid != nullptr) { *valid = true; }
-    lru.erase(std::find(lru.begin(), lru.end(), g.raw_bits()));
+    //lru.erase(std::find(lru.begin(), lru.end(), g.raw_bits()));
     lru.push_back(g.raw_bits());
     it->second.usedcnt++;
     return it->second;
@@ -198,7 +201,7 @@ public:
     }
   }
 private:
-#endif
+#endif // GRAPPA_CACHE_ENABLE
 
   /// Storage for address
   intptr_t storage_;
@@ -302,11 +305,9 @@ public:
   }
 
   /// Return whether the current core is owner.
-#ifdef GRAPPA_TARDIS_CACHE
   inline bool is_owner() const {
     return core() == Grappa::mycore();
   }
-#endif
 
   /// Return the home core of a global address
   /// TODO: implement this.

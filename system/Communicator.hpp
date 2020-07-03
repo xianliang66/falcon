@@ -119,7 +119,7 @@ void immediate_deserializer_with_payload( char * f, int size, CommunicatorContex
 
 /// Communication layer
 class Communicator {
-#ifdef GRAPPA_TARDIS_CACHE
+#ifdef GRAPPA_CACHE_ENABLE
 public:
   // storage_->(rts, wts)
   std::unordered_map<uintptr_t, Grappa::impl::owner_cache_info> owner_tardis_cache;
