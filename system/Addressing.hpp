@@ -143,19 +143,20 @@ public:
       if (!insert_new) { return tardis_cache.begin()->second; }
       // TODO: Batched eviction
       if (lru.size() >= MAX_CACHE_NUMBER) {
-        auto victim = lru.begin();
-        while (victim != lru.end() && tardis_cache[*victim].usedcnt > 0)
+        auto victim = lru.rbegin();
+        // TODO: WI usedcnt should be zero.
+        while (victim != lru.rend() && tardis_cache[*victim].usedcnt > 0)
           victim++;
-        if (victim != lru.end()) {
-          auto& v = tardis_cache[*victim];
-          if (v.size == sizeof(T)) {
-            freed_space = v.object;
+        if (victim != lru.rend()) {
+          auto v = tardis_cache.find(*victim);
+          if (v->second.size == sizeof(T)) {
+            freed_space = v->second.object;
           }
           else {
-            free(v.object);
+            free(v->second.object);
           }
-          lru.erase(victim);
-          tardis_cache.erase(tardis_cache.find(*victim));
+          lru.erase(v->second.lru_iter);
+          tardis_cache.erase(v);
         }
       }
 
@@ -163,18 +164,41 @@ public:
         freed_space = malloc(sizeof(T));
         CHECK(freed_space != nullptr);
       }
-      lru.push_back(g.raw_bits());
+      lru.push_front(g.raw_bits());
       auto& r = tardis_cache[g.raw_bits()] =
         Grappa::impl::cache_info(freed_space, sizeof(T));
+      r.lru_iter = lru.begin();
       r.usedcnt++;
 
       return r;
     }
     if (valid != nullptr) { *valid = true; }
-    //lru.erase(std::find(lru.begin(), lru.end(), g.raw_bits()));
-    lru.push_back(g.raw_bits());
-    it->second.usedcnt++;
+    lru.erase(it->second.lru_iter);
+    lru.push_front(g.raw_bits());
+    it->second.lru_iter = lru.begin();
+    if (insert_new) {
+      it->second.usedcnt++;
+    }
     return it->second;
+  }
+
+  static bool evict( const GlobalAddress<T>& g ) {
+    std::unordered_map<uintptr_t, Grappa::impl::cache_info>& tardis_cache =
+      global_communicator.tardis_cache;
+    std::list<uintptr_t>& lru = global_communicator.lru;
+
+    auto iter = tardis_cache.find(g.raw_bits());
+    if (iter == tardis_cache.end()) {
+      return false;
+    }
+
+    if (iter->second.refcnt > 0 || iter->second.usedcnt > 0) {
+      return false;
+    }
+
+    lru.erase(iter->second.lru_iter);
+    free(iter->second.object);
+    tardis_cache.erase(iter);
   }
 
   /*

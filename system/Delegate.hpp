@@ -126,6 +126,10 @@ namespace Grappa {
     }
 #endif
 
+#ifdef GRAPPA_WI_CACHE
+    enum InvResponse { Miss, Retry, Succ }; 
+#endif
+
 #ifdef GRAPPA_TARDIS_CACHE
     enum CacheState { Owner, Hit, Expired, Miss };
 
@@ -392,6 +396,7 @@ retry:
       });
       if (r.locked)
         goto retry;
+
       mycache.valid = true;
       mycache.assign(&r.object);
       GlobalAddress<T>::deactive_cache(mycache);
@@ -475,23 +480,24 @@ retry:
           << " write as owner.";*/
         info.locked = true;
 
+        int cnt = 0;
         // Broadcast invalidation messages according to the copyset.
         for (int i = 0; i < info.copyset.size(); i++) {
           if (info.copyset[i] && Grappa::mycore() != i) {
-            auto r = internal_call<S,C>((Core)i, [target, value] {
+            auto r = internal_call<S,C>((Core)i, [target] {
               bool valid;
               auto& mycache = GlobalAddress<T>::find_cache(target, &valid, false);
               if (!valid) {
-                return false;
+                return InvResponse::Miss;
               }
               else {
                 mycache.valid = false;
-                return true;
+                return InvResponse::Succ;
               }
             });
             /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
               << " sends INV as owner to Core " << i << " with result " << r;*/
-            if (!r) info.copyset[i] = false;
+            if (r == InvResponse::Miss) info.copyset[i] = false;
           }
         }
 

@@ -1,5 +1,6 @@
 #pragma once
 #include <bitset>
+#include <list>
 
 // Cache protocol. Only one of them can be defined
 #define GRAPPA_TARDIS_CACHE
@@ -18,7 +19,7 @@
 #ifdef GRAPPA_CACHE_ENABLE
 
 #define LEASE 10
-#define MAX_CACHE_NUMBER 10240
+#define MAX_CACHE_NUMBER 4096
 
 typedef uint32_t timestamp_t;
 
@@ -33,8 +34,11 @@ struct cache_info_base {
   mutable char refcnt;
   // How many tasks who holds the reference to cache_info are there?
   mutable char usedcnt;
+  // These two fields implements template parameters.
   mutable size_t size;
   mutable void* object;
+  // O(1) remove/insertion time for LRU list.
+  mutable std::list<uintptr_t>::iterator lru_iter;
 
   void assign(const void* obj) {
     memcpy(object, obj, size);

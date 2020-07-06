@@ -125,7 +125,7 @@ public:
   std::unordered_map<uintptr_t, Grappa::impl::owner_cache_info> owner_tardis_cache;
   // storage_->cache_info<T>, where T might be different types.
   std::unordered_map<uintptr_t, Grappa::impl::cache_info> tardis_cache;
-  // Last element is most frequently used.
+  // The first element is most frequently used.
   std::list<uintptr_t> lru;
 #endif
 private:
