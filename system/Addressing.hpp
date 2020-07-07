@@ -144,7 +144,6 @@ public:
       // TODO: Batched eviction
       if (lru.size() >= MAX_CACHE_NUMBER) {
         auto victim = lru.rbegin();
-        // TODO: WI usedcnt should be zero.
         while (victim != lru.rend() && tardis_cache[*victim].usedcnt > 0)
           victim++;
         if (victim != lru.rend()) {
@@ -176,29 +175,11 @@ public:
     lru.erase(it->second.lru_iter);
     lru.push_front(g.raw_bits());
     it->second.lru_iter = lru.begin();
+    // Inv request don't need to increase usedcnt.
     if (insert_new) {
       it->second.usedcnt++;
     }
     return it->second;
-  }
-
-  static bool evict( const GlobalAddress<T>& g ) {
-    std::unordered_map<uintptr_t, Grappa::impl::cache_info>& tardis_cache =
-      global_communicator.tardis_cache;
-    std::list<uintptr_t>& lru = global_communicator.lru;
-
-    auto iter = tardis_cache.find(g.raw_bits());
-    if (iter == tardis_cache.end()) {
-      return false;
-    }
-
-    if (iter->second.refcnt > 0 || iter->second.usedcnt > 0) {
-      return false;
-    }
-
-    lru.erase(iter->second.lru_iter);
-    free(iter->second.object);
-    tardis_cache.erase(iter);
   }
 
   /*

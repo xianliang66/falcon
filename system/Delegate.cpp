@@ -67,3 +67,4 @@ GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_cache_miss, 0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_cache_expired, 0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_call_all, 0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_call_one, 0);
+GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_fast_path, 0);

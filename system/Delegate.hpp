@@ -60,6 +60,7 @@ GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_cache_miss);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_cache_expired);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_call_all);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_call_one);
+GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_fast_path);
 
 
 namespace Grappa {
@@ -340,7 +341,34 @@ namespace Grappa {
         GlobalAddress<T>::deactive_cache(mycache);
         return *(T*)mycache.get_object();
       }
+
       timestamp_t pts = Grappa::mypts();
+      timestamp_t wts = mycache.wts;
+
+      // Expired: try to renew first
+      if (valid) {
+        auto r = internal_call<S,C>(target.core(), [target, pts, wts]() {
+          delegate_read_targets++;
+
+          auto& owner_ts = GlobalAddress<T>::find_owner_info(target);
+          if (owner_ts.wts == wts) {
+            owner_ts.rts = std::max<timestamp_t>(std::max<timestamp_t>(
+                  owner_ts.rts, owner_ts.wts + LEASE), (pts + LEASE));
+            return owner_ts.rts;
+          }
+          else {
+            return (timestamp_t)~0L;
+          }
+        });
+        if (r != (timestamp_t)~0L) {
+          delegate_fast_path++;
+          mycache.rts = r;
+          GlobalAddress<T>::deactive_cache(mycache);
+          return *(T*)mycache.get_object();
+        }
+      }
+
+      // Ask for the latest object.
       auto r = internal_call<S,C>(target.core(), [target, pts]() {
         delegate_read_targets++;
 
