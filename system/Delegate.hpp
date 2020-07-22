@@ -61,11 +61,17 @@ GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_cache_expired);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_call_all);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_call_one);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_fast_path);
+GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_update);
+GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_bg_renewal);
 
 
 namespace Grappa {
     /// @addtogroup Delegates
     /// @{
+  template< GlobalCompletionEvent * C,
+            TaskMode B = TaskMode::Bound,
+            typename F = decltype(nullptr) >
+  void spawnRemote(Core dest, F f);
 
   namespace impl {
 
@@ -128,11 +134,53 @@ namespace Grappa {
 #endif
 
 #ifdef GRAPPA_WI_CACHE
-    enum InvResponse { Miss, Retry, Succ }; 
+    enum InvResponse { Miss, Retry, Succ };
 #endif
 
 #ifdef GRAPPA_TARDIS_CACHE
     enum CacheState { Owner, Hit, Expired, Miss };
+
+    template <typename T>
+    static void bg_renewal(void) {
+      delegate_bg_renewal++;
+
+      auto info = GlobalAddress<T>::get_expired(Grappa::mypts());
+
+      //LOG(ERROR) << "Core " << Grappa::mycore() <<  " expired: " << info.size();
+
+      for (auto iter = info.rbegin(); iter != info.rend(); iter++) {
+        bool valid;
+        GlobalAddress<T> target = *iter;
+        impl::cache_info& target_cache = GlobalAddress<T>::find_cache(target, &valid, false);
+        if (!valid || target_cache.usedcnt > 0) {
+          continue;
+        }
+        target_cache.usedcnt++;
+        GlobalAddress<T>::active_cache(target_cache);
+
+        timestamp_t wts = target_cache.wts;
+        timestamp_t pts = Grappa::mypts();
+
+        auto ts = internal_call(target.core(), [target, pts, wts] {
+          auto& owner_ts = GlobalAddress<T>::find_owner_info(target);
+          if (owner_ts.wts == wts) {
+            owner_ts.rts = std::max<timestamp_t>(std::max<timestamp_t>(
+                  owner_ts.rts, owner_ts.wts + LEASE), (pts + LEASE));
+            return owner_ts.rts;
+          }
+          else {
+            delegate_update++;
+            return (timestamp_t)~0L;
+          }
+        });
+
+        if (ts != (timestamp_t)~0L) {
+          delegate_fast_path++;
+          target_cache.rts = ts;
+        }
+        GlobalAddress<T>::deactive_cache(target_cache);
+    }
+  }
 
     static CacheState try_read_cache(const impl::cache_info& mycache,
         bool valid) {
@@ -348,8 +396,6 @@ namespace Grappa {
       // Expired: try to renew first
       if (valid) {
         auto r = internal_call<S,C>(target.core(), [target, pts, wts]() {
-          delegate_read_targets++;
-
           auto& owner_ts = GlobalAddress<T>::find_owner_info(target);
           if (owner_ts.wts == wts) {
             owner_ts.rts = std::max<timestamp_t>(std::max<timestamp_t>(
@@ -361,7 +407,6 @@ namespace Grappa {
           }
         });
         if (r != (timestamp_t)~0L) {
-          delegate_fast_path++;
           mycache.rts = r;
           GlobalAddress<T>::deactive_cache(mycache);
           return *(T*)mycache.get_object();
@@ -466,6 +511,7 @@ retry:
 #endif // GRAPPA_CACHE_ENABLE
 
 #ifdef GRAPPA_TARDIS_CACHE
+      timestamp_t pts = Grappa::mypts();
       if (target.is_owner()) {
         auto& owner_ts = GlobalAddress<T>::find_owner_info(target);
         timestamp_t ts = std::max<timestamp_t>(Grappa::mypts(), owner_ts.rts + 1);
@@ -475,6 +521,10 @@ retry:
         /*LOG(INFO) << "Core " << Grappa::mycore() << "(O) ptr " << target.raw_bits()
           << " #" << delegate_writes << " write wts "
           << owner_ts.wts << " rts " << owner_ts.rts << " pts " << Grappa::mypts();*/
+
+        if (Grappa::mypts() != pts) {
+          Grappa::spawnRemote<nullptr>(Grappa::mycore(), bg_renewal<T>);
+        }
         return;
       }
 
@@ -497,6 +547,10 @@ retry:
         << " #" << delegate_writes << " write wts "
         << mycache.wts << " rts " << mycache.rts << " pts " << Grappa::mypts();*/
       GlobalAddress<T>::deactive_cache(mycache);
+
+      if (Grappa::mypts() != pts) {
+        Grappa::spawnRemote<nullptr>(Grappa::mycore(), bg_renewal<T>);
+      }
 #elif defined(GRAPPA_WI_CACHE)
       if (target.is_owner()) {
         auto& info = GlobalAddress<T>::find_owner_info(target);

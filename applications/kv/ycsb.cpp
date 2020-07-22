@@ -2,9 +2,9 @@
 #include <cstdlib>
 
 // YCSB template parameters
-#define recordcount 10000
+#define recordcount 100000
 #define operationcount 500000
-#define readproportion 1
+#define readproportion .8
 #define updateproportion (1 - readproportion)
 // Percentage of data items that constitute the hot set
 #define hotspotdatafraction .2
@@ -111,6 +111,7 @@ static void execute_operation(db db) {
 int main(int argc, char * argv[]) {
   init( &argc, &argv );
   run([]{
+    double begin_time = 0.0;
     Metrics::reset_all_cores();
     Metrics::start_tracing();
 
@@ -123,6 +124,7 @@ int main(int argc, char * argv[]) {
     // Why can't we pass db the lambda expression?
     GlobalAddress<record> g = mydb.data;
 
+    begin_time = walltime();
     on_all_cores( [g] {
       db a(g);
       for (int i = 0; i < operationcount; i++) {
@@ -132,6 +134,7 @@ int main(int argc, char * argv[]) {
         LOG(ERROR) << "Core " << Grappa::mycore() << " failure count:" << failcount;
       }
     });
+    LOG(ERROR) << "Time: " << walltime() - begin_time << "s";
     global_free(mydb.data);
 
     Metrics::merge_and_dump_to_file();

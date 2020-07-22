@@ -662,7 +662,7 @@ void Grappa_activate()
     CHECK_GT( free_core_sz_gb, shared_pool_max_sz_gb ) 
       << "Not enough free locale shared heap for fully-allocated shared message pool";
   }
-  
+
   global_communicator.barrier();
 }
 

@@ -57,6 +57,7 @@
 #include "TardisCache.hpp"
 
 #include <list>
+#include <vector>
 
 typedef int Pool;
 
@@ -181,6 +182,38 @@ public:
     }
     return it->second;
   }
+
+  static std::list<uintptr_t>::iterator get_lru_iter(void) {
+    return global_communicator.lru.begin();
+  }
+
+#ifdef GRAPPA_TARDIS_CACHE
+  // WARNING: return value might not be typename T.
+  // Remember to deactive each object.
+  static std::vector<GlobalAddress<T>> get_expired(timestamp_t pts) {
+    std::unordered_map<uintptr_t, Grappa::impl::cache_info>& tardis_cache =
+      global_communicator.tardis_cache;
+    std::list<uintptr_t>& lru = global_communicator.lru;
+
+    std::vector<GlobalAddress<T>> result;
+
+    for (auto iter = lru.rbegin(); iter != lru.rend(); iter++) {
+      // Maybe this iterator has been removed.
+      auto citer = tardis_cache.find(*iter);
+      if (citer != tardis_cache.end()) {
+        Grappa::impl::cache_info& itscache = citer->second;
+        if (Grappa::mypts() <= itscache.rts) {
+          break;
+        }
+        if (itscache.usedcnt == 0) {
+          result.push_back(GlobalAddress<T>::Raw(*iter));
+        }
+      }
+    }
+
+    return result;
+  }
+#endif // GRAPPA_TARDIS_CACHE
 
   /*
    * refcnt is co-routine's lock. Make sure there is only one task accesses one

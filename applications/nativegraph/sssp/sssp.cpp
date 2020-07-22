@@ -30,6 +30,9 @@ static bool terminated(GlobalAddress<thread_state> complete_addr) {
       for (int i = 0; i < Grappa::cores(); i++) {
         while (delegate::read(complete_addr + i) == RUNNING) {
           Grappa::yield();
+#ifdef GRAPPA_TARDIS_CACHE
+          Grappa::mypts() += 10;
+#endif
         }
       }
     });
