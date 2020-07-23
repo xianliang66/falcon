@@ -134,7 +134,8 @@ int main(int argc, char * argv[]) {
         LOG(ERROR) << "Core " << Grappa::mycore() << " failure count:" << failcount;
       }
     });
-    LOG(ERROR) << "Time: " << walltime() - begin_time << "s";
+    LOG(ERROR) << "Time: " << walltime() - begin_time << "s. proto: "
+      << GRAPPA_CC_PROTOCOL_NAME;
     global_free(mydb.data);
 
     Metrics::merge_and_dump_to_file();

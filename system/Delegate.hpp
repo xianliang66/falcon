@@ -431,7 +431,7 @@ namespace Grappa {
         << mycache.wts << " rts " << mycache.rts << " pts " << Grappa::mypts();*/
       GlobalAddress<T>::deactive_cache(mycache);
       return r.r;
-#elif (defined(GRAPPA_WI_CACHE) || defined(GRAPPA_WB_CACHE))
+#elif (defined(GRAPPA_WI_CACHE))
       if (target.is_owner()) {
         auto& owner_ts = GlobalAddress<T>::find_owner_info(target);
         while (owner_ts.locked) {
@@ -632,7 +632,6 @@ retry:
       mycache.valid = true;
       mycache.assign(&value);
       GlobalAddress<T>::deactive_cache(mycache);
-#elif defined(GRAPPA_WB_CACHE)
 #else // Vanilla Grappa
       internal_call<S,C>(target.core(), [target, value]() -> T {
         delegate_write_targets++;

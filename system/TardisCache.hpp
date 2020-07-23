@@ -5,15 +5,18 @@
 // Cache protocol. Only one of them can be defined
 #define GRAPPA_TARDIS_CACHE
 //#define GRAPPA_WI_CACHE
-//#define GRAPPA_WB_CACHE
 
-#if (defined(GRAPPA_TARDIS_CACHE) || defined(GRAPPA_WI_CACHE) \
-  || defined(GRAPPA_WB_CACHE))
+#if (defined(GRAPPA_TARDIS_CACHE) || defined(GRAPPA_WI_CACHE))
 #define GRAPPA_CACHE_ENABLE
+#define MAX_NODE_NUM 64
 #endif
 
-#if (defined(GRAPPA_WI_CACHE) || defined(GRAPPA_WB_CACHE))
-#define MAX_NODE_NUM 64
+#if (defined(GRAPPA_TARDIS_CACHE))
+#define GRAPPA_CC_PROTOCOL_NAME "Tardis"
+#elif (defined(GRAPPA_WI_CACHE))
+#define GRAPPA_CC_PROTOCOL_NAME "Write-Invalidation"
+#else
+#define GRAPPA_CC_PROTOCOL_NAME "Vanilla"
 #endif
 
 #ifdef GRAPPA_CACHE_ENABLE
@@ -70,7 +73,7 @@ struct rpc_read_result {
 };
 #endif // GRAPPA_TARDIS_CACHE
 
-#if (defined(GRAPPA_WI_CACHE) || defined(GRAPPA_WB_CACHE))
+#if (defined(GRAPPA_WI_CACHE))
 struct owner_cache_info {
   std::bitset<MAX_NODE_NUM> copyset;
   // Whether this object is locked globally.
@@ -83,7 +86,7 @@ struct cache_info : cache_info_base {
   cache_info() : cache_info_base(), valid(false) {}
   cache_info(void *obj, size_t sz) : cache_info_base(obj, sz), valid(false) {}
 };
-#endif // GRAPPA_WI_CACHE || GRAPPA_WB_CACHE
+#endif // GRAPPA_WI_CACHE
 
 }
 }

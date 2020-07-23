@@ -138,7 +138,8 @@ int main(int argc, char* argv[]) {
     do_sssp(g, root);
 
     double this_sssp_time = walltime() - t;
-    LOG(ERROR) << "(root=" << root << ", time=" << this_sssp_time << ")";
+    LOG(ERROR) << "(root=" << root << ", time=" << this_sssp_time << ") proto:"
+      << GRAPPA_CC_PROTOCOL_NAME;
     sssp_time += this_sssp_time;
 
     if (!verified) {
