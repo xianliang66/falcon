@@ -47,7 +47,6 @@ GRAPPA_DECLARE_METRIC(SummarizingMetric<double>, delegate_network_latency);
 GRAPPA_DECLARE_METRIC(SummarizingMetric<double>, delegate_wakeup_latency);
 
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_ops);
-GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_targets);
 
 namespace Grappa {
   
@@ -92,8 +91,6 @@ namespace Grappa {
         auto ra = make_global(&result);
         
         send_message(dest, [ra,func] {
-          delegate_targets++;
-  
           func();
   
           // TODO: replace with handler-safe send_message
@@ -129,7 +126,6 @@ namespace Grappa {
 
       if (dest == origin) {
         // short-circuit if local
-        delegate_targets++;
         delegate_short_circuits++;
         return func();
       } else {
@@ -148,8 +144,6 @@ namespace Grappa {
         auto da = make_global(&dfe);
         
         send_message(dest, [da,func] {
-          delegate_targets++;
-          
           auto val = func();
           
           // TODO: replace with handler-safe send_message

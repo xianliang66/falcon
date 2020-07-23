@@ -3,8 +3,8 @@
 #include <list>
 
 // Cache protocol. Only one of them can be defined
-#define GRAPPA_TARDIS_CACHE
-//#define GRAPPA_WI_CACHE
+//#define GRAPPA_TARDIS_CACHE
+#define GRAPPA_WI_CACHE
 
 #if (defined(GRAPPA_TARDIS_CACHE) || defined(GRAPPA_WI_CACHE))
 #define GRAPPA_CACHE_ENABLE
@@ -44,6 +44,8 @@ struct cache_info_base {
   mutable std::list<uintptr_t>::iterator lru_iter;
 
   void assign(const void* obj) {
+    // This object has been freed.
+    if (object == nullptr) return;
     memcpy(object, obj, size);
   }
   void* get_object() { return object; }

@@ -131,7 +131,7 @@ namespace Grappa {
   ///   Grappa::spawn( [&data] { data++; } );
   /// @endcode
   template < typename TF >
-  void privateTask( TF tf ) {
+  void privateTask( TF tf, bool lowPrio = false ) {
     tasks_created++;
     if( sizeof( tf ) > 24 ) { // if it's too big to fit in a task queue entry
       DVLOG(4) << "Heap allocated task of size " << sizeof(tf);
@@ -141,7 +141,8 @@ namespace Grappa {
       
       // heap-allocate copy of functor, passing ownership to spawned task
       TF * tp = new TF(tf);
-      Grappa::impl::global_task_manager.spawnLocalPrivate( Grappa::impl::task_heapfunctor_proxy<TF>, tp, tp, tp );
+      Grappa::impl::global_task_manager.spawnLocalPrivate(
+          Grappa::impl::task_heapfunctor_proxy<TF>, tp, tp, tp, lowPrio );
     } else {
       /// Shove copy of functor into space used for task arguments.
       /// @todo: misusing argument list. Is this okay?
@@ -151,7 +152,8 @@ namespace Grappa {
       // TF * tfargs = reinterpret_cast< TF * >( &args[0] );
       // *tfargs = tf;
       DVLOG(5) << "Worker " << Grappa::impl::global_scheduler.get_current_thread() << " spawns private";
-      Grappa::impl::global_task_manager.spawnLocalPrivate( Grappa::impl::task_functor_proxy<TF>, args[0], args[1], args[2] );
+      Grappa::impl::global_task_manager.spawnLocalPrivate( Grappa::impl::task_functor_proxy<TF>,
+          args[0], args[1], args[2], lowPrio );
     }
   }
   
@@ -185,9 +187,9 @@ namespace Grappa {
   
     
   template< TaskMode B = TaskMode::Bound, typename F = decltype(nullptr) >
-  void spawn(F f) {
+  void spawn(F f, bool lowPrio = false) {
     if (B == TaskMode::Bound) {
-      privateTask(f);
+      privateTask(f, lowPrio);
     } else if (B == TaskMode::Unbound) {
       publicTask(f);
     }
@@ -260,12 +262,12 @@ void run(FP fp) {
 /// @param arg1 second task argument
 /// @param arg2 third task argument
 template < typename A0, typename A1, typename A2 >
-void Grappa_privateTask( void (*fn_p)(A0,A1,A2), A0 arg0, A1 arg1, A2 arg2 ) {
+void Grappa_privateTask( void (*fn_p)(A0,A1,A2), A0 arg0, A1 arg1, A2 arg2, bool lowPrio = false ) {
   STATIC_ASSERT_SIZE_8( A0 );
   STATIC_ASSERT_SIZE_8( A1 );
   STATIC_ASSERT_SIZE_8( A2 );
   DVLOG(5) << "Worker " << Grappa::impl::global_scheduler.get_current_thread() << " spawns private";
-  Grappa::impl::global_task_manager.spawnLocalPrivate( fn_p, arg0, arg1, arg2 );
+  Grappa::impl::global_task_manager.spawnLocalPrivate( fn_p, arg0, arg1, arg2, lowPrio );
 }
 
 /// @deprecated see Grappa::spawn()

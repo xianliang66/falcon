@@ -101,14 +101,12 @@ namespace Grappa {
         
         if (dest == origin) {
           // short-circuit if local
-          delegate_targets++;
           delegate_short_circuits++;
           fill(func());
         } else {
           start_time = Grappa::timestamp();
           
           send_heap_message(dest, [origin, func, this] {
-            delegate_targets++;
             R val = func();
             
             // TODO: replace with handler-safe send_message

@@ -290,7 +290,14 @@ bool TaskManager::tryConsumeLocal( Task * result ) {
     privateQ.pop_front();
     TaskManagerMetrics::record_private_task_dequeue();
     return true;
-  } else {
+  }
+  else if ( lowPrioPrivateHasEle() ) {
+    *result = lowPrioPrivateQ.front();
+    lowPrioPrivateQ.pop_front();
+    TaskManagerMetrics::record_private_task_dequeue();
+    return true;
+  }
+  else {
     checkWorkShare();
 
     if ( publicHasEle() ) {

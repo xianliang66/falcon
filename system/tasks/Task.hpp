@@ -47,7 +47,7 @@ namespace Grappa {
 // forward declaration of Grappa Core
 typedef int16_t Core;
 
-/// Represents work to be done. 
+/// Represents work to be done.
 /// A function pointer and 3 64-bit arguments.
 class Task {
 
@@ -75,12 +75,12 @@ class Task {
     Task () {}
 
     /// New task creation constructor.
-    /// 
+    ///
     /// @param fn_p function pointer taking three 64-bit arguments, no return value
     /// @param arg0 first task argument
     /// @param arg1 second task argument
     /// @param arg2 third task argument
-    Task (void (* fn_p)(void*, void*, void*), void* arg0, void* arg1, void* arg2) 
+    Task (void (* fn_p)(void*, void*, void*), void* arg0, void* arg1, void* arg2)
       : fn_p ( fn_p )
         , arg0 ( arg0 )
         , arg1 ( arg1 )
@@ -102,11 +102,11 @@ class Task {
 
 /// Convenience function for creating a new task.
 /// This function is callable as type-safe but creates an anonymous task object.
-/// 
+///
 /// @tparam A0 first argument type
 /// @tparam A1 second argument type
 /// @tparam A2 third argument type
-/// 
+///
 /// @param arg0 first task argument
 /// @param arg1 second task argument
 /// @param arg2 third task argument
@@ -141,7 +141,8 @@ class TaskManagerMetrics {
 class TaskManager {
   private:
     /// queue for tasks assigned specifically to this Core
-    std::deque<Task> privateQ; 
+    std::deque<Task> privateQ;
+    std::deque<Task> lowPrioPrivateQ;
 
     /// indicates that all tasks *should* be finished
     /// and termination can occur
@@ -154,19 +155,19 @@ class TaskManager {
     bool all_terminate;
 
     /// stealing on/off
-    bool doSteal;   
+    bool doSteal;
 
     /// steal lock
     bool stealLock;
 
     /// sharing on/off
-    bool doShare;    
+    bool doShare;
 
     /// work share lock
-    bool wshareLock; 
+    bool wshareLock;
 
     /// global queue on/off
-    bool doGQ;      
+    bool doGQ;
     bool gqPushLock;     // global queue push lock
     bool gqPullLock;     // global queue pull lock
 
@@ -198,6 +199,11 @@ class TaskManager {
       return !privateQ.empty();
     }
 
+    /// @return true if low-priority Core-private queue has elements
+    bool lowPrioPrivateHasEle() const {
+      return !lowPrioPrivateQ.empty();
+    }
+
     // "queue" operations
     bool tryConsumeLocal( Task * result );
     bool tryConsumeShared( Task * result );
@@ -211,12 +217,12 @@ class TaskManager {
 
 
     /// Output internal state.
-    /// 
+    ///
     /// @param o existing output stream to append to
-    /// 
-    /// @return new output stream 
+    ///
+    /// @return new output stream
     std::ostream& dump( std::ostream& o = std::cout, const char * terminator = "" ) const;
- 
+
 
   public:
 
@@ -225,10 +231,10 @@ class TaskManager {
     TaskManager();
     void init (Core localId, Core* neighbors, Core numLocalNodes);
     void activate();
-  
+
     size_t estimate_footprint() const;
     size_t adjust_footprint(size_t target);
-    
+
     /// @return true if work is considered finished and
     ///         the task system is terminating
     bool isWorkDone() {
@@ -240,16 +246,18 @@ class TaskManager {
     }
 
     /*TODO return value?*/
-    template < typename A0, typename A1, typename A2 > 
+    template < typename A0, typename A1, typename A2 >
       void spawnPublic( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A2 arg2 );
 
-    /*TODO return value?*/ 
-    template < typename A0, typename A1, typename A2 > 
-      void spawnLocalPrivate( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A2 arg2 );
+    /*TODO return value?*/
+    template < typename A0, typename A1, typename A2 >
+      void spawnLocalPrivate( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A2 arg2,
+          bool lowPrio = false );
 
-    /*TODO return value?*/ 
-    template < typename A0, typename A1, typename A2 > 
-      void spawnRemotePrivate( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A2 arg2 );
+    /*TODO return value?*/
+    template < typename A0, typename A1, typename A2 >
+      void spawnRemotePrivate( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A2 arg2,
+          bool lowPrio = false );
 
     uint64_t numLocalPublicTasks() const;
     uint64_t numLocalPrivateTasks() const;
@@ -270,7 +278,7 @@ class TaskManager {
 inline bool TaskManager::available( ) const {
   DVLOG(6) << " publicHasEle()=" << publicHasEle()
     << " privateHasEle()=" << privateHasEle();
-  return privateHasEle() 
+  return privateHasEle()
     || publicHasEle()
     || (doSteal && stealLock )
     || (doShare && wshareLock )
@@ -281,7 +289,7 @@ inline bool TaskManager::available( ) const {
 inline bool TaskManager::local_available( ) const {
   DVLOG(6) << " publicHasEle()=" << publicHasEle()
     << " privateHasEle()=" << privateHasEle();
-  return privateHasEle() 
+  return privateHasEle()
     || publicHasEle();
 }
 
@@ -296,7 +304,7 @@ inline bool TaskManager::local_available( ) const {
 /// @param arg0 first task argument
 /// @param arg1 second task argument
 /// @param arg2 third task argument
-template < typename A0, typename A1, typename A2 > 
+template < typename A0, typename A1, typename A2 >
 inline void TaskManager::spawnPublic( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A2 arg2 ) {
   Task newtask = createTask(f, arg0, arg1, arg2 );
   push_public_task( newtask );
@@ -315,12 +323,23 @@ inline void TaskManager::spawnPublic( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A
 /// @param arg1 second task argument
 /// @param arg2 third task argument
 template < typename A0, typename A1, typename A2 >
-inline void TaskManager::spawnLocalPrivate( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A2 arg2 ) {
+inline void TaskManager::spawnLocalPrivate( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A2 arg2,
+    bool lowPrio ) {
   Task newtask = createTask( f, arg0, arg1, arg2 );
 #if PRIVATEQ_LIFO
-  privateQ.push_front( newtask );
+  if (lowPrio) {
+    lowPrioPrivateQ.push_front( newtask );
+  }
+  else {
+    privateQ.push_front( newtask );
+  }
 #else
-  privateQ.push_back( newtask );
+  if (lowPrio) {
+    lowPrioPrivateQ.push_back( newtask );
+  }
+  else {
+    privateQ.push_back( newtask );
+  }
 #endif
 
   /// note from cbarrier implementation
@@ -340,13 +359,24 @@ inline void TaskManager::spawnLocalPrivate( void (*f)(A0, A1, A2), A0 arg0, A1 a
 /// @param arg0 first task argument
 /// @param arg1 second task argument
 /// @param arg2 third task argument
-template < typename A0, typename A1, typename A2 > 
-inline void TaskManager::spawnRemotePrivate( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A2 arg2 ) {
+template < typename A0, typename A1, typename A2 >
+inline void TaskManager::spawnRemotePrivate( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A2 arg2,
+    bool lowPrio ) {
   Task newtask = createTask( f, arg0, arg1, arg2 );
 #if PRIVATEQ_LIFO
-  privateQ.push_front( newtask );
+  if (lowPrio) {
+    lowPrioPrivateQ.push_front( newtask );
+  }
+  else {
+    privateQ.push_front( newtask );
+  }
 #else
-  privateQ.push_back( newtask );
+  if (lowPrio) {
+    lowPrioPrivateQ.push_back( newtask );
+  }
+  else {
+    privateQ.push_back( newtask );
+  }
 #endif
   /// note from cbarrier implementation
   /*

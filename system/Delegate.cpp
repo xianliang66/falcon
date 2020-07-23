@@ -52,21 +52,17 @@ GRAPPA_DEFINE_METRIC(SummarizingMetric<double>, delegate_roundtrip_latency, 0.0)
 GRAPPA_DEFINE_METRIC(SummarizingMetric<double>, delegate_network_latency, 0.0);
 GRAPPA_DEFINE_METRIC(SummarizingMetric<double>, delegate_wakeup_latency, 0.0);
 
+GRAPPA_DEFINE_METRIC(SummarizingMetric<double>, delegate_read_latency, 0.0);
+GRAPPA_DEFINE_METRIC(SummarizingMetric<double>, delegate_write_latency, 0.0);
+
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_ops, 0);
-GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_targets, 0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_reads, 0);
-GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_read_targets, 0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_writes, 0);
-GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_write_targets, 0);
-GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_cmpswaps, 0);
-GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_cmpswap_targets, 0);
-GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_fetchadds, 0);
-GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_fetchadd_targets, 0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_cache_hit, 0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_cache_miss, 0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_cache_expired, 0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_call_all, 0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_call_one, 0);
-GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_fast_path, 0);
-GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_update, 0);
+GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_bg_fast_path, 0);
+GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_bg_update, 0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_bg_renewal, 0);
