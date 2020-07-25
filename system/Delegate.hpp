@@ -135,6 +135,7 @@ namespace Grappa {
 
     template <typename T>
     static void bg_renewal(void) {
+#ifdef TARDIS_BG_RENEWAL
       delegate_bg_renewal++;
 
       auto info = GlobalAddress<T>::get_expired(Grappa::mypts());
@@ -178,6 +179,7 @@ namespace Grappa {
         }
         GlobalAddress<T>::deactive_cache(target_cache);
     }
+#endif // TARDIS_BG_RENEWAL
   }
 
     static CacheState try_read_cache(const impl::cache_info& mycache,
@@ -387,7 +389,8 @@ namespace Grappa {
       timestamp_t wts = mycache.wts;
 
       // Expired: try to renew first
-      /*if (valid) {
+#ifdef TARDIS_TWO_STAGE_RENEWAL
+      if (valid) {
         auto r = internal_call<S,C>(target.core(), [target, pts, wts]() {
           auto& owner_ts = GlobalAddress<T>::find_owner_info(target);
           if (owner_ts.wts == wts) {
@@ -405,7 +408,8 @@ namespace Grappa {
           delegate_read_latency += (Grappa::timestamp() - start_time);
           return *(T*)mycache.get_object();
         }
-      }*/
+      }
+#endif
 
       // Ask for the latest object.
       auto r = internal_call<S,C>(target.core(), [target, pts]() {

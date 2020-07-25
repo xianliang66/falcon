@@ -3,8 +3,8 @@
 #include <list>
 
 // Cache protocol. Only one of them can be defined
-//#define GRAPPA_TARDIS_CACHE
-#define GRAPPA_WI_CACHE
+#define GRAPPA_TARDIS_CACHE
+//#define GRAPPA_WI_CACHE
 
 #if (defined(GRAPPA_TARDIS_CACHE) || defined(GRAPPA_WI_CACHE))
 #define GRAPPA_CACHE_ENABLE
@@ -12,7 +12,20 @@
 #endif
 
 #if (defined(GRAPPA_TARDIS_CACHE))
+
+#define TARDIS_BG_RENEWAL
+//#define TARDIS_TWO_STAGE_RENEWAL
+
+#if (defined(TARDIS_BG_RENEWAL) && defined(TARDIS_TWO_STAGE_RENEWAL))
+#define GRAPPA_CC_PROTOCOL_NAME "Tardis (BG_RENEWAL|TWO_STAGE_RENEWAL)"
+#elif (defined(TARDIS_BG_RENEWAL))
+#define GRAPPA_CC_PROTOCOL_NAME "Tardis (BG_RENEWAL)"
+#elif (defined(TARDIS_TWO_STAGE_RENEWAL))
+#define GRAPPA_CC_PROTOCOL_NAME "Tardis (TWO_STAGE_RENEWAL)"
+#else
 #define GRAPPA_CC_PROTOCOL_NAME "Tardis"
+#endif
+
 #elif (defined(GRAPPA_WI_CACHE))
 #define GRAPPA_CC_PROTOCOL_NAME "Write-Invalidation"
 #else

@@ -145,7 +145,11 @@ public:
       // TODO: Batched eviction
       if (lru.size() >= MAX_CACHE_NUMBER) {
         auto victim = lru.rbegin();
-        while (victim != lru.rend() && tardis_cache[*victim].usedcnt > 0)
+        while (victim != lru.rend() &&
+#ifdef GRAPPA_TARDIS_CACHE
+          tardis_cache[*victim].rts >= Grappa::mypts() &&
+#endif
+          tardis_cache[*victim].usedcnt > 0)
           victim++;
         if (victim != lru.rend()) {
           auto v = tardis_cache.find(*victim);
@@ -197,18 +201,10 @@ public:
 
     std::vector<GlobalAddress<T>> result;
 
-    for (auto iter = lru.rbegin(); iter != lru.rend(); iter++) {
-      // Maybe this iterator has been removed.
-      auto citer = tardis_cache.find(*iter);
-      if (citer != tardis_cache.end()) {
-        Grappa::impl::cache_info& itscache = citer->second;
-        if (Grappa::mypts() <= itscache.rts) {
-          break;
-        }
-        if (itscache.usedcnt == 0) {
-          result.push_back(GlobalAddress<T>::Raw(*iter));
-        }
-      }
+    int max_update = 0;
+    for (auto iter = lru.begin(); iter != lru.end() &&
+      max_update < lru.size() / 2; iter++, max_update++) {
+      result.push_back(GlobalAddress<T>::Raw(*iter));
     }
 
     return result;
