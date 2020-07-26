@@ -64,7 +64,11 @@ namespace Grappa {
   using VertexID = int64_t;
 
   /// Empty struct, for specifying lack of either Vertex or Edge data in @ref Graph.
-  struct Empty {};
+  struct Empty {
+    Empty() {}
+    Empty(VertexID stub) {}
+    Empty(VertexID s1, VertexID s2) {}
+  };
 
   namespace impl {
     /// Vertex with customizable inline 'data' field. Will attempt
