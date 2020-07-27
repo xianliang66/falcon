@@ -10,8 +10,8 @@ using namespace Grappa;
 DEFINE_bool(metrics, false, "Dump metrics to stdout.");
 
 // input size
-DEFINE_int32( scale, 15, "Log2 number of vertices." );
-DEFINE_int32(edgefactor, 128, "Average number of edges per vertex.");
+DEFINE_int32( scale, 18, "Log2 number of vertices." );
+DEFINE_int32(edgefactor, 12, "Average number of edges per vertex.");
 
 // input file
 DEFINE_string(path, "", "Path to graph source file");

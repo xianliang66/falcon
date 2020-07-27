@@ -1,10 +1,12 @@
 #include "db.hpp"
 #include <cstdlib>
 
+//#define CONSTANT_DISTRIBUTION
+#define ZIPF_DISTRIBUTION
 // YCSB template parameters
 #define recordcount 100000
 #define operationcount 500000
-#define readproportion .8
+#define readproportion .5
 #define updateproportion (1 - readproportion)
 // Percentage of data items that constitute the hot set
 #define hotspotdatafraction .2
@@ -16,6 +18,49 @@
  * non-owned objects, the pointer is INVALID!
  */
 enum db_op { READ, UPDATE, INSERT, REMOVE };
+
+static double highest_prob = 0.0;
+static double cul_prob[recordcount];
+
+static db_op get_op(void) {
+  double dice = rand() * 1.0 / RAND_MAX;
+  if (dice < readproportion) {
+    return READ;
+  }
+  else {
+    return UPDATE;
+  }
+}
+
+static int get_idx(void) {
+  double dice = rand() * 1.0 / RAND_MAX;
+
+#ifdef CONSTANT_DISTRIBUTION
+  return recordcount * dice;
+#elif defined(ZIPF_DISTRIBUTION)
+  int left = 0, right = recordcount - 1;
+  int idx;
+  int cnt = 0;
+
+  if (dice < highest_prob) {
+    return 0;
+  }
+  while (true) {
+    cnt++;
+    idx = (left + right) / 2;
+    if (idx >= recordcount - 1)
+      return recordcount - 1;
+    if (dice > cul_prob[idx] && dice < cul_prob[idx + 1])
+      break;
+    if (dice > cul_prob[idx])
+      left = idx;
+    else
+      right = idx;
+  }
+  return (idx * (recordcount / 10)) % recordcount;
+
+#endif
+}
 
 static void init_db(db& db) {
   static_assert(SLOT_NUMBER >= 2 * recordcount, "Too many records!");
@@ -32,76 +77,48 @@ static void init_db(db& db) {
   }
 }
 
+static void init_cul_prob(void) {
+#ifdef ZIPF_DISTRIBUTION
+  double sum = 0;
+  for (int i = 1; i < recordcount; i++) {
+    sum += (1.0 / i);
+  }
+  highest_prob = cul_prob[0] = (((double)operationcount) / sum) /
+    ((double)operationcount);
+  for (int i = 1; i < recordcount; i++) {
+    cul_prob[i] = cul_prob[i - 1] + cul_prob[0] / (i + 1);
+  }
+#endif
+}
+
 static int failcount = 0;
 static void execute_operation(db db) {
   db_op op;
-  bool hotop;
-  double dice;
   record_field_t key, value;
   bool result;
 
-  dice = rand() * 1.0 / RAND_MAX;
-  if (dice < readproportion) {
-    op = READ;
-  }
-  else {
-    op = UPDATE;
-  }
-  dice = rand() * 1.0 / RAND_MAX;
-  if (dice < hotspotopnfraction) {
-    hotop = true;
-  }
-  else {
-    hotop = false;
-  }
+  op = get_op();
 
-  dice = rand() * 1.0 / RAND_MAX;
   switch (op) {
     case READ: {
-      if (hotop) {
-        int idx = recordcount * hotspotdatafraction * dice;
-        db.generate_key(idx, key);
-        result = db.read(key, value, idx);
-        if (!result) {
-          LOG(ERROR) << "Core " << Grappa::mycore() << " read " << idx << " failed. Hash:"
-            << db.hash(key);
-          failcount++;
-        }
-      }
-      else {
-        int idx = (recordcount - recordcount * hotspotdatafraction) * dice
-          + recordcount * hotspotdatafraction;
-        db.generate_key(idx, key);
-        result = db.read(key, value, idx);
-        if (!result) {
-          LOG(ERROR) << "Core " << Grappa::mycore() << " read " << idx << " failed. Hash:"
-            << db.hash(key);
-          failcount++;
-        }
+      int idx = get_idx();
+      db.generate_key(idx, key);
+      result = db.read(key, value, idx);
+      if (!result) {
+        LOG(ERROR) << "Core " << Grappa::mycore() << " read " << idx << " failed. Hash:"
+          << db.hash(key);
+        failcount++;
       }
       break;
     }
     case UPDATE: {
-      if (hotop) {
-        int idx = recordcount * hotspotdatafraction * dice;
-        db.generate_key(idx, key);
-        result = db.update(key, value, idx);
-        if (!result) {
-          LOG(ERROR) << "Core " << Grappa::mycore() << " write " << idx << " failed. Hash:"
-            << db.hash(key);
-          failcount++;
-        }
-      }
-      else {
-        int idx = (recordcount - recordcount * hotspotdatafraction) * dice
-          + recordcount * hotspotdatafraction;
-        db.generate_key(idx, key);
-        result = db.update(key, value, idx);
-        if (!result) {
-          LOG(ERROR) << "Core " << Grappa::mycore() << " write " << idx << " failed. Hash:"
-            << db.hash(key);
-          failcount++;
-        }
+      int idx = get_idx();
+      db.generate_key(idx, key);
+      result = db.update(key, value, idx);
+      if (!result) {
+        LOG(ERROR) << "Core " << Grappa::mycore() << " write " << idx << " failed. Hash:"
+          << db.hash(key);
+        failcount++;
       }
       break;
     }
@@ -115,10 +132,13 @@ int main(int argc, char * argv[]) {
     Metrics::reset_all_cores();
     Metrics::start_tracing();
 
-    srand(1);
-
     db mydb;
     init_db(mydb);
+
+    on_all_cores([] {
+      srand(Grappa::mycore());
+      init_cul_prob();
+    });
 
     record_field_t key, value;
     // Why can't we pass db the lambda expression?
@@ -134,7 +154,7 @@ int main(int argc, char * argv[]) {
         LOG(ERROR) << "Core " << Grappa::mycore() << " failure count:" << failcount;
       }
     });
-    LOG(ERROR) << "Time: " << walltime() - begin_time << "s. proto: "
+    LOG(ERROR) << "Time: " << walltime() - begin_time << "s. proto:"
       << GRAPPA_CC_PROTOCOL_NAME;
     global_free(mydb.data);
 
