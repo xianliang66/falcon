@@ -350,13 +350,11 @@ namespace Grappa {
       delegate_reads++;
       auto start_time = Grappa::timestamp();
 
-#ifdef GRAPPA_CACHE_ENABLE
       if (M == CacheMode::WriteThrough) {
         return internal_call<S,C>(target.core(), [target]() -> T {
           return *target.pointer();
         });
       }
-#endif // GRAPPA_CACHE_ENABLE
 
 #ifdef GRAPPA_TARDIS_CACHE
       if (target.is_owner()) {

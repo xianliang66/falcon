@@ -6,7 +6,7 @@
 
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 19, "Log2 number of vertices.");
+DEFINE_int32(scale, 15, "Log2 number of vertices.");
 DEFINE_int32(edgefactor, 34, "Average number of edges per vertex.");
 DEFINE_int64(root, 1, "Index of root vertex.");
 
@@ -25,24 +25,9 @@ void dump_sssp_graph(GlobalAddress<G> &g);
 enum thread_state { INIT = 0x0, RUNNING = 0xBA, UPDATE = 0xCA, TERMINATE = 0xFF };
 
 static bool terminated(GlobalAddress<thread_state> complete_addr) {
-  if (delegate::read(complete_addr) != INIT) {
-    on_all_cores([complete_addr] {
-      for (int i = 0; i < Grappa::cores(); i++) {
-        while (delegate::read(complete_addr + i) == RUNNING) {
-          Grappa::yield();
-#ifdef GRAPPA_TARDIS_CACHE
-          Grappa::mypts() += 10;
-#endif
-        }
-      }
-    });
-  }
   for (int i = 0; i < Grappa::cores(); i++) {
     thread_state ts = delegate::read(complete_addr + i);
     if (ts == UPDATE || ts == INIT) {
-      for (int j = 0; j < Grappa::cores(); j++) {
-        delegate::write(complete_addr + j, RUNNING);
-      }
       return false;
     }
   }
@@ -63,14 +48,12 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
     GlobalAddress<thread_state> complete_addr =
       global_alloc<thread_state>(Grappa::cores());
 
-    int iter = 0;
     static bool local_complete = true;
-    while (!terminated(complete_addr)) {
-      LOG(ERROR) << "iteration --> " << iter++;
-
-      // iterate over all vertices of the graph
-      on_all_cores([g,complete_addr]{
-        // Remote call async
+    // iterate over all vertices of the graph
+    on_all_cores([g,complete_addr]{
+      // Remote call async
+      int iter = 0;
+      while (!terminated(complete_addr)) {
         local_complete = true;
         for (VertexID id = 0; id < g->nv; id++) {
           if ((g->vs+id).core() == Grappa::mycore()) {
@@ -95,13 +78,15 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
                 delegate::write(g->vs+id, v);
               }
             };
-            spawnRemote<&gce>(Grappa::mycore(), func);
-            //func();
+            //spawnRemote<&gce>(Grappa::mycore(), func);
+            func();
         }
       }
-      gce.wait();
-      LOG(ERROR) << "Core " << Grappa::mycore() << " updates " << nupdates
-        << " vertices.";
+#ifdef GRAPPA_TARDIS_CACHE
+      Grappa::mypts() += 10;
+#endif
+      LOG(ERROR) << "Core " << Grappa::mycore() << " iteration " << ++iter
+        << " updates " << nupdates << " vertices.";
       nupdates = 0;
       if (local_complete) {
         delegate::write(complete_addr + Grappa::mycore(), TERMINATE);
@@ -109,8 +94,8 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
       else {
         delegate::write(complete_addr + Grappa::mycore(), UPDATE);
       }
-    });
-  }
+    }
+  });
 }
 
 int main(int argc, char* argv[]) {
@@ -145,6 +130,9 @@ int main(int argc, char* argv[]) {
       << GRAPPA_CC_PROTOCOL_NAME;
     sssp_time += this_sssp_time;
 
+    if (FLAGS_metrics) Metrics::merge_and_print();
+    Metrics::merge_and_dump_to_file();
+
     if (!verified) {
       // only verify the first one to save time
       t = walltime();
@@ -154,11 +142,6 @@ int main(int argc, char* argv[]) {
       verified = true;
     }
     sssp_mteps += sssp_nedge / this_sssp_time / 1.0e6;
-
-    LOG(ERROR) << "\n" << sssp_nedge << "\n" << sssp_time << "\n" << sssp_mteps;
-
-    if (FLAGS_metrics) Metrics::merge_and_print();
-    Metrics::merge_and_dump_to_file();
 
     // dump graph after computation
     //dump_sssp_graph(g);
