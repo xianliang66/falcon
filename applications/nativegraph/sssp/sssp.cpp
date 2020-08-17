@@ -115,13 +115,14 @@ int main(int argc, char* argv[]) {
     // create graph with incorporated Vertex
     auto g = G::Undirected( tg );
 
-    tg.destroy();
-
     graph_create_time = (walltime()-t);
 
     LOG(ERROR) << "graph generated (#nodes = " << g->nv << "), " << graph_create_time;
 
     t = walltime();
+
+    Metrics::reset_all_cores();
+    Metrics::start_tracing();
 
     auto root = FLAGS_root;
     do_sssp(g, root);
@@ -143,9 +144,6 @@ int main(int argc, char* argv[]) {
       verified = true;
     }
     sssp_mteps += sssp_nedge / this_sssp_time / 1.0e6;
-
-    // dump graph after computation
-    //dump_sssp_graph(g);
 
     tg.destroy();
     g->destroy();
