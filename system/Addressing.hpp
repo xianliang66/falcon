@@ -146,9 +146,6 @@ public:
       if (lru.size() >= MAX_CACHE_NUMBER) {
         auto victim = lru.rbegin();
         while (victim != lru.rend() &&
-#ifdef GRAPPA_TARDIS_CACHE
-          tardis_cache[*victim].rts >= Grappa::mypts() &&
-#endif
           tardis_cache[*victim].usedcnt > 0)
           victim++;
         if (victim != lru.rend()) {
