@@ -10,8 +10,8 @@ using namespace Grappa;
 DEFINE_bool(metrics, false, "Dump metrics to stdout.");
 
 // input size
-DEFINE_int32( scale, 18, "Log2 number of vertices." );
-DEFINE_int32(edgefactor, 12, "Average number of edges per vertex.");
+DEFINE_int32( scale, 16, "Log2 number of vertices." );
+DEFINE_int32(edgefactor, 34, "Average number of edges per vertex.");
 
 // input file
 DEFINE_string(path, "", "Path to graph source file");
@@ -44,32 +44,18 @@ struct PagerankVertex {
 enum thread_state { INIT = 0x0, RUNNING = 0xBA, UPDATE = 0xCA, TERMINATE = 0xFF };
 
 static bool terminated(GlobalAddress<thread_state> complete_addr) {
-  if (delegate::read(complete_addr) != INIT) {
-    on_all_cores([complete_addr] {
-      for (int i = 0; i < Grappa::cores(); i++) {
-        while (delegate::read(complete_addr + i) == RUNNING) {
-          Grappa::yield();
-#ifdef GRAPPA_TARDIS_CACHE
-          Grappa::mypts() += 10;
-#endif
-        }
-      }
-    });
-  }
   for (int i = 0; i < Grappa::cores(); i++) {
     thread_state ts = delegate::read(complete_addr + i);
     if (ts == UPDATE || ts == INIT) {
-      for (int j = 0; j < Grappa::cores(); j++) {
-        delegate::write(complete_addr + j, RUNNING);
-      }
       return false;
     }
   }
   return true;
 }
 
-static GlobalCompletionEvent gce;
+static int ntotal = 0;
 static int nupdates = 0;
+static CompletionEvent ce;
 // Iterative method
 // R(t+1) = dMR(t) + (1-d)/N vec(1)
 void pagerank( GlobalAddress<Graph<PagerankVertex>> g,
@@ -78,14 +64,23 @@ void pagerank( GlobalAddress<Graph<PagerankVertex>> g,
     GlobalAddress<thread_state> complete_addr =
       global_alloc<thread_state>(Grappa::cores());
 
+    on_all_cores([g,complete_addr]{
+      // Remote call async
+      for (VertexID id = 0; id < g->nv; id++) {
+        if ((g->vs+id).core() == Grappa::mycore()) {
+          ntotal++;
+        }
+      }
+    });
+
     int iter = 0;
     static bool local_complete = true;
-    while (!terminated(complete_addr)) {
-      LOG(ERROR) << "iteration --> " << iter++;
 
+    on_all_cores([g,complete_addr,damp_factor,epsilon]{
+      while (!terminated(complete_addr)) {
       // iterate over all vertices of the graph
-      on_all_cores([g,complete_addr,damp_factor,epsilon]{
         // Remote call async
+        ce.enroll(ntotal);
         local_complete = true;
         for (VertexID id = 0; id < g->nv; id++) {
           if ((g->vs+id).core() == Grappa::mycore()) {
@@ -105,14 +100,15 @@ void pagerank( GlobalAddress<Graph<PagerankVertex>> g,
                 local_complete = false;
                 nupdates++;
               }
+              ce.complete();
             };
-            spawnRemote<&gce>(Grappa::mycore(), func);
+            spawnRemote(Grappa::mycore(), func);
             //func();
         }
       }
-      gce.wait();
-      LOG(ERROR) << "Core " << Grappa::mycore() << " updates " << nupdates
-        << " vertices.";
+      ce.wait();
+      //LOG(ERROR) << "Core " << Grappa::mycore() << " iteration " << ++iter
+       // << " updates " << nupdates << " vertices.";
       nupdates = 0;
       if (local_complete) {
         delegate::write(complete_addr + Grappa::mycore(), TERMINATE);
@@ -120,10 +116,11 @@ void pagerank( GlobalAddress<Graph<PagerankVertex>> g,
       else {
         delegate::write(complete_addr + Grappa::mycore(), UPDATE);
       }
-    });
-  }
+    }
+  });
 }
 
+static GlobalCompletionEvent gce;
 int main(int argc, char* argv[]) {
   Grappa::init(&argc, &argv);
   Grappa::run([]{

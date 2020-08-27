@@ -3,18 +3,18 @@
 #include <list>
 
 // Cache protocol. Only one of them can be defined
-#define GRAPPA_TARDIS_CACHE
-//#define GRAPPA_WI_CACHE
+//#define GRAPPA_TARDIS_CACHE
+#define GRAPPA_WI_CACHE
 
 #if (defined(GRAPPA_TARDIS_CACHE) || defined(GRAPPA_WI_CACHE))
 #define GRAPPA_CACHE_ENABLE
-#define MAX_NODE_NUM 256 
+#define MAX_NODE_NUM 256
 #endif
 
 #if (defined(GRAPPA_TARDIS_CACHE))
 
 //#define TARDIS_BG_RENEWAL
-#define TARDIS_TWO_STAGE_RENEWAL
+//#define TARDIS_TWO_STAGE_RENEWAL
 
 #if (defined(TARDIS_BG_RENEWAL) && defined(TARDIS_TWO_STAGE_RENEWAL))
 #define GRAPPA_CC_PROTOCOL_NAME "Tardis (BG_RENEWAL|TWO_STAGE_RENEWAL)"
@@ -30,12 +30,13 @@
 #define GRAPPA_CC_PROTOCOL_NAME "Write-Invalidation"
 #else
 #define GRAPPA_CC_PROTOCOL_NAME "Vanilla"
+#define MAX_CACHE_NUMBER 0
 #endif
 
 #ifdef GRAPPA_CACHE_ENABLE
 
 #define LEASE 10
-#define MAX_CACHE_NUMBER 4096
+#define MAX_CACHE_NUMBER 256000
 
 typedef uint32_t timestamp_t;
 

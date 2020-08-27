@@ -1,12 +1,14 @@
 #include "db.hpp"
 #include <cstdlib>
+#include <cmath>
 
 //#define CONSTANT_DISTRIBUTION
 #define ZIPF_DISTRIBUTION
+#define ZIPF_ALPHA 0
 // YCSB template parameters
-#define recordcount 100000
-#define operationcount 500000
-#define readproportion .5
+#define recordcount 10000
+#define operationcount 5000000
+#define readproportion .0
 #define updateproportion (1 - readproportion)
 // Percentage of data items that constitute the hot set
 #define hotspotdatafraction .2
@@ -79,14 +81,13 @@ static void init_db(db& db) {
 
 static void init_cul_prob(void) {
 #ifdef ZIPF_DISTRIBUTION
-  double sum = 0;
+  double sum = 1;
   for (int i = 1; i < recordcount; i++) {
-    sum += (1.0 / i);
+    sum += pow(i, -ZIPF_ALPHA);
   }
-  highest_prob = cul_prob[0] = (((double)operationcount) / sum) /
-    ((double)operationcount);
+  highest_prob = cul_prob[0] = 1.0 / sum;
   for (int i = 1; i < recordcount; i++) {
-    cul_prob[i] = cul_prob[i - 1] + cul_prob[0] / (i + 1);
+    cul_prob[i] = cul_prob[i - 1] + pow(i, -ZIPF_ALPHA) / sum;
   }
 #endif
 }
@@ -129,8 +130,6 @@ int main(int argc, char * argv[]) {
   init( &argc, &argv );
   run([]{
     double begin_time = 0.0;
-    Metrics::reset_all_cores();
-    Metrics::start_tracing();
 
     db mydb;
     init_db(mydb);
@@ -144,10 +143,13 @@ int main(int argc, char * argv[]) {
     // Why can't we pass db the lambda expression?
     GlobalAddress<record> g = mydb.data;
 
+    Metrics::reset_all_cores();
+    Metrics::start_tracing();
+
     begin_time = walltime();
     on_all_cores( [g] {
       db a(g);
-      for (int i = 0; i < operationcount; i++) {
+      for (int i = 0; i < operationcount / Grappa::cores(); i++) {
         execute_operation(a);
       }
       if (failcount > 0) {

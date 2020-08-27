@@ -7,15 +7,9 @@ extern int64_t nedge_traversed;
 struct SSSPData {
   double dist;
   int64_t parent;
-  int64_t level;
-  bool seen;
 
   SSSPData() {
     dist = std::numeric_limits<double>::max();
-
-    // parent = -1;
-    level = 0;
-    seen = false;
   }
 };
 

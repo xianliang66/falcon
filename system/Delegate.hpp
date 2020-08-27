@@ -429,7 +429,13 @@ namespace Grappa {
 #elif (defined(GRAPPA_WI_CACHE))
       if (target.is_owner()) {
         auto& owner_ts = GlobalAddress<T>::find_owner_info(target);
+        long cnt = 0;
+        double t = walltime();
         while (owner_ts.locked) {
+          if ((walltime() - t) > 2) {
+            t = walltime();
+            LOG(ERROR) << "Core " << Grappa::mycore() << " DEADLOCK at " << target.raw_bits();
+          }
           Grappa::yield();
         }
         delegate_read_latency += (Grappa::timestamp() - start_time);
@@ -462,8 +468,9 @@ retry:
         }
         return lock_obj<T>{ *target.pointer(), info.locked };
       });
-      if (r.locked)
+      if (r.locked) {
         goto retry;
+      }
 
       mycache.valid = true;
       mycache.assign(&r.object);
@@ -558,29 +565,45 @@ retry:
         /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
           << " write as owner.";*/
         info.locked = true;
+        LOG(ERROR) << "Core " << Grappa::mycore() << " write begins at " << target.raw_bits();
 
-        int cnt = 0;
-        // Broadcast invalidation messages according to the copyset.
+        CompletionEvent ce1;
+        auto cpyset = info.copyset;
+        int scnt = 0;
+        // Broadcast invalidation messages according to the copyset concurrently.
         for (int i = 0; i < info.copyset.size(); i++) {
           if (info.copyset[i] && Grappa::mycore() != i) {
-            auto r = internal_call<S,C>((Core)i, [target] {
-              bool valid;
-              auto& mycache = GlobalAddress<T>::find_cache(target, &valid, false);
-              if (!valid) {
-                return InvResponse::Miss;
-              }
-              else {
-                mycache.valid = false;
-                return InvResponse::Succ;
-              }
-            });
-            /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
-              << " sends INV as owner to Core " << i << " with result " << r;*/
-            if (r == InvResponse::Miss) info.copyset[i] = false;
+            scnt++;
+            auto func = [i, target, value, &cpyset, &ce1] {
+              auto r = internal_call<S,C>((Core)i, [target] {
+                bool valid;
+                auto& mycache = GlobalAddress<T>::find_cache(target, &valid, false);
+                if (!valid) {
+                  return InvResponse::Miss;
+                }
+                else {
+                  mycache.valid = false;
+                  return InvResponse::Succ;
+                }
+              });
+              /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
+                << " sends INV as owner to Core " << i << " with result " << r;*/
+              if (r == InvResponse::Miss) cpyset[i] = false;
+              LOG(ERROR) << "Core " << Grappa::mycore() << " sent INV to Core " << i << " at " << target.raw_bits();
+              ce1.complete();
+            };
+            LOG(ERROR) << "Core " << Grappa::mycore() << " spawn INV func to Core " << i << " at " << target.raw_bits();
+            ce1.enroll();
+            spawn(func, Grappa::impl::TaskPrio::HIGH);
+            //func();
           }
         }
+        short rand = random();
+        ce1.wait();
+        info.copyset = cpyset;
 
         info.locked = false;
+        LOG(ERROR) << "Core " << Grappa::mycore() << " write ends at " << target.raw_bits();
         *target.pointer() = value;
         delegate_write_latency += (Grappa::timestamp() - start_time);
         return;
@@ -594,35 +617,55 @@ retry:
         << " write as non-owner.";*/
       // Embedded delegataions are disallowed in Grappa.
       // Lock this object.
-      auto cpyset = internal_call<S,C>(target.core(), [target] {
+retry:
+      auto r = internal_call<S,C>(target.core(), [target] {
         auto& info = GlobalAddress<T>::find_owner_info(target);
-        info.locked = true;
-        return info.copyset;
+        if (!info.locked) {
+          info.locked = true;
+          return lock_obj<decltype(info.copyset)> { info.copyset, false };
+        }
+        else {
+          return lock_obj<decltype(info.copyset)> { info.copyset, true };
+        }
       });
-      // Broadcast invalidation messages according to the copyset.
+      if (r.locked) {
+        goto retry;
+      }
+      auto& cpyset = r.object;
+
+      // Broadcast invalidation messages according to the copyset concurrently.
+      CompletionEvent ce;
       for (int i = 0; i < cpyset.size(); i++) {
         if (cpyset[i] && i != Grappa::mycore()) {
-          auto r = internal_call<S,C>((Core)i, [target, value] {
-            bool valid;
-            auto& mycache = GlobalAddress<T>::find_cache(target, &valid, false);
-            if (!valid) {
-              return false;
-            }
-            else {
-              mycache.valid = false;
-              return true;
-            }
-          });
-          /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
-            << " sends INV as non-owner to Core " << i << " with result " << r;*/
-          if (!r) cpyset[i] = false;
+          ce.enroll();
+          auto func = [i, target, value, &cpyset, &ce] {
+            auto r = internal_call<S,C>((Core)i, [target, value] {
+              bool valid;
+              auto& mycache = GlobalAddress<T>::find_cache(target, &valid, false);
+              if (!valid) {
+                return false;
+              }
+              else {
+                mycache.valid = false;
+                return true;
+              }
+            });
+            /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
+              << " sends INV as non-owner to Core " << i << " with result " << r;*/
+            if (!r) cpyset[i] = false;
+            ce.complete();
+          };
+          spawn(func);
+          //func();
         }
       }
+      ce.wait();
       cpyset[Grappa::mycore()] = true;
       // Unlock this object and update the copyset.
       internal_call<S,C>(target.core(), [target, value, cpyset] {
         auto& info = GlobalAddress<T>::find_owner_info(target);
         info.copyset = cpyset;
+        CHECK(info.locked);
         info.locked = false;
         *target.pointer() = value;
       });

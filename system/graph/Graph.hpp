@@ -106,7 +106,7 @@ namespace Grappa {
       static constexpr size_t locale_heap_size() { return 0; }
       static constexpr size_t size() { return locale_heap_size() + global_heap_size(); }
 
-    } GRAPPA_BLOCK_ALIGNED;
+    };
 
     template< typename T>
     struct Vertex<T, /*HeapData = */ true> {
@@ -124,7 +124,7 @@ namespace Grappa {
       static constexpr size_t locale_heap_size() { return sizeof(T); }
       static constexpr size_t size() { return locale_heap_size() + global_heap_size(); }
 
-    } GRAPPA_BLOCK_ALIGNED;
+    };
   }
 
   /// Distributed graph data structure, with customizable vertex and edge data.

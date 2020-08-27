@@ -44,6 +44,8 @@
 namespace Grappa {
   namespace impl {
 
+    enum TaskPrio { LOW, NORMAL, HIGH };
+
 // forward declaration of Grappa Core
 typedef int16_t Core;
 
@@ -142,6 +144,7 @@ class TaskManager {
   private:
     /// queue for tasks assigned specifically to this Core
     std::deque<Task> privateQ;
+    std::deque<Task> highPrioPrivateQ;
     std::deque<Task> lowPrioPrivateQ;
 
     /// indicates that all tasks *should* be finished
@@ -199,6 +202,11 @@ class TaskManager {
       return !privateQ.empty();
     }
 
+    /// @return true if high-priority Core-private queue has elements
+    bool highPrioPrivateHasEle() const {
+      return !highPrioPrivateQ.empty();
+    }
+
     /// @return true if low-priority Core-private queue has elements
     bool lowPrioPrivateHasEle() const {
       return !lowPrioPrivateQ.empty();
@@ -252,12 +260,12 @@ class TaskManager {
     /*TODO return value?*/
     template < typename A0, typename A1, typename A2 >
       void spawnLocalPrivate( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A2 arg2,
-          bool lowPrio = false );
+          Grappa::impl::TaskPrio prio = Grappa::impl::TaskPrio::NORMAL );
 
     /*TODO return value?*/
     template < typename A0, typename A1, typename A2 >
       void spawnRemotePrivate( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A2 arg2,
-          bool lowPrio = false );
+          Grappa::impl::TaskPrio prio = Grappa::impl::TaskPrio::NORMAL );
 
     uint64_t numLocalPublicTasks() const;
     uint64_t numLocalPrivateTasks() const;
@@ -324,21 +332,25 @@ inline void TaskManager::spawnPublic( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A
 /// @param arg2 third task argument
 template < typename A0, typename A1, typename A2 >
 inline void TaskManager::spawnLocalPrivate( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A2 arg2,
-    bool lowPrio ) {
+    Grappa::impl::TaskPrio prio ) {
   Task newtask = createTask( f, arg0, arg1, arg2 );
 #if PRIVATEQ_LIFO
-  if (lowPrio) {
-    lowPrioPrivateQ.push_front( newtask );
-  }
-  else {
-    privateQ.push_front( newtask );
+  switch (prio) {
+    case Grappa::impl::TaskPrio::LOW:
+      lowPrioPrivateQ.push_front(newtask); break;
+    case Grappa::impl::TaskPrio::NORMAL:
+      privateQ.push_front(newtask); break;
+    case Grappa::impl::TaskPrio::HIGH:
+      highPrioPrivateQ.push_front(newtask); break;
   }
 #else
-  if (lowPrio) {
-    lowPrioPrivateQ.push_back( newtask );
-  }
-  else {
-    privateQ.push_back( newtask );
+  switch (prio) {
+    case Grappa::impl::TaskPrio::LOW:
+      lowPrioPrivateQ.push_back(newtask); break;
+    case Grappa::impl::TaskPrio::NORMAL:
+      privateQ.push_back(newtask); break;
+    case Grappa::impl::TaskPrio::HIGH:
+      highPrioPrivateQ.push_back(newtask); break;
   }
 #endif
 
@@ -361,21 +373,25 @@ inline void TaskManager::spawnLocalPrivate( void (*f)(A0, A1, A2), A0 arg0, A1 a
 /// @param arg2 third task argument
 template < typename A0, typename A1, typename A2 >
 inline void TaskManager::spawnRemotePrivate( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A2 arg2,
-    bool lowPrio ) {
+    Grappa::impl::TaskPrio prio ) {
   Task newtask = createTask( f, arg0, arg1, arg2 );
 #if PRIVATEQ_LIFO
-  if (lowPrio) {
-    lowPrioPrivateQ.push_front( newtask );
-  }
-  else {
-    privateQ.push_front( newtask );
+  switch (prio) {
+    case Grappa::impl::TaskPrio::LOW:
+      lowPrioPrivateQ.push_front(newtask); break;
+    case Grappa::impl::TaskPrio::NORMAL:
+      privateQ.push_front(newtask); break;
+    case Grappa::impl::TaskPrio::HIGH:
+      highPrioPrivateQ.push_front(newtask); break;
   }
 #else
-  if (lowPrio) {
-    lowPrioPrivateQ.push_back( newtask );
-  }
-  else {
-    privateQ.push_back( newtask );
+  switch (prio) {
+    case Grappa::impl::TaskPrio::LOW:
+      lowPrioPrivateQ.push_back(newtask); break;
+    case Grappa::impl::TaskPrio::NORMAL:
+      privateQ.push_back(newtask); break;
+    case Grappa::impl::TaskPrio::HIGH:
+      highPrioPrivateQ.push_back(newtask); break;
   }
 #endif
   /// note from cbarrier implementation

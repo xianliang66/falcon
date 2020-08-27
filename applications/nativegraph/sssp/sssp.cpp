@@ -6,7 +6,7 @@
 
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 18, "Log2 number of vertices.");
+DEFINE_int32(scale, 9, "Log2 number of vertices.");
 DEFINE_int32(edgefactor, 34, "Average number of edges per vertex.");
 DEFINE_int64(root, 1, "Index of root vertex.");
 
@@ -28,14 +28,16 @@ static bool terminated(GlobalAddress<thread_state> complete_addr) {
   for (int i = 0; i < Grappa::cores(); i++) {
     thread_state ts = delegate::read(complete_addr + i);
     if (ts == UPDATE || ts == INIT) {
+      //LOG(ERROR) << "Core " << Grappa::mycore() << " thinks Core " << i << " not completed yet.";
       return false;
     }
   }
   return true;
 }
 
-static GlobalCompletionEvent gce;
 static int nupdates = 0;
+static CompletionEvent ce;
+
 void do_sssp(GlobalAddress<G> &g, int64_t root) {
     // set zero value for root distance and
     // setup 'root' as the parent of itself
@@ -49,6 +51,7 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
       global_alloc<thread_state>(Grappa::cores());
 
     static bool local_complete = true;
+
     // iterate over all vertices of the graph
     on_all_cores([g,complete_addr]{
       // Remote call async
@@ -57,6 +60,7 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
         local_complete = true;
         for (VertexID id = 0; id < g->nv; id++) {
           if ((g->vs+id).core() == Grappa::mycore()) {
+            ce.enroll();
             auto func = [g,id] {
               bool update = false;
               auto v = delegate::read(g->vs+id);
@@ -68,7 +72,6 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
                 if (sum < v.data.dist) {
                   v.data.dist = sum;
                   v.data.parent = *iter;
-                  v.data.seen = true;
                   local_complete = false;
                   update = true;
                 }
@@ -77,22 +80,26 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
                 nupdates++;
                 delegate::write(g->vs+id, v);
               }
+              ce.complete();
             };
-            spawnRemote<&gce>(Grappa::mycore(), func);
+            spawn(func);
             //func();
         }
       }
-      gce.wait();
+      ce.wait();
 #ifdef GRAPPA_TARDIS_CACHE
       Grappa::mypts() += 10;
 #endif
+      if (nupdates > 0)
       LOG(ERROR) << "Core " << Grappa::mycore() << " iteration " << ++iter
         << " updates " << nupdates << " vertices.";
       nupdates = 0;
       if (local_complete) {
+        //LOG(ERROR) << "Core " << Grappa::mycore() << " write terminate.";
         delegate::write(complete_addr + Grappa::mycore(), TERMINATE);
       }
       else {
+        LOG(ERROR) << "Core " << Grappa::mycore() << " write update.";
         delegate::write(complete_addr + Grappa::mycore(), UPDATE);
       }
     }
@@ -129,7 +136,8 @@ int main(int argc, char* argv[]) {
 
     double this_sssp_time = walltime() - t;
     LOG(ERROR) << "(root=" << root << ", time=" << this_sssp_time << ") proto:"
-      << GRAPPA_CC_PROTOCOL_NAME;
+      << GRAPPA_CC_PROTOCOL_NAME << " #Cache:" <<
+      MAX_CACHE_NUMBER * 1.0 / (1L << FLAGS_scale) * 100 << "%";
     sssp_time += this_sssp_time;
 
     if (FLAGS_metrics) Metrics::merge_and_print();

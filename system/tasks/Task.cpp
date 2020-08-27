@@ -77,7 +77,7 @@ GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, workshares_initiated_,0);
 GRAPPA_DEFINE_METRIC(SummarizingMetric<uint64_t>, workshares_initiated_received_elements_,0);
 GRAPPA_DEFINE_METRIC(SummarizingMetric<uint64_t>, workshares_initiated_pushed_elements_,0);
 
-// number of calls to sample() 
+// number of calls to sample()
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, sample_calls,0);
 
 // on-demand state
@@ -102,7 +102,7 @@ TaskManager global_task_manager;
 
 /// Create an uninitialized TaskManager
 /// init() must subsequently be called before fully initialized.
-  TaskManager::TaskManager ( ) 
+  TaskManager::TaskManager ( )
   : privateQ( )
   , workDone( false )
   , doSteal( false )
@@ -114,14 +114,14 @@ TaskManager global_task_manager;
   , gqPullLock( true )
   , nextVictimIndex( 0 )
 {
-    
+
 }
 
 size_t TaskManager::estimate_footprint() const {
   return FLAGS_stack_size * FLAGS_num_starting_workers
     + sizeof(Task) * steal_queue_size;
 }
-    
+
 size_t TaskManager::adjust_footprint(size_t target) {
   if (estimate_footprint() > target) {
     MASTER_ONLY LOG(WARNING) << "Adjusting to fit in target footprint: " << target << " bytes";
@@ -192,12 +192,12 @@ uint64_t TaskManager::numLocalPublicTasks() const {
 uint64_t TaskManager::numLocalPrivateTasks() const {
   return privateQ.size();
 }
-    
+
 /// @return true if local shared queue has elements
 bool TaskManager::publicHasEle() const {
   return publicQ.depth() > 0;
 }
-    
+
 std::ostream& TaskManager::dump( std::ostream& o, const char * terminator) const {
   return o << "\"TaskManager\": {" << std::endl
     << "  \"publicQ\": " << publicQ.depth( ) << std::endl
@@ -233,9 +233,9 @@ inline void TaskManager::tryPushToGlobal() {
 }
 
 /// Find an unstarted Task to execute.
-/// 
+///
 /// @param result buffer for the returned Task
-/// 
+///
 /// @return true if result is valid, otherwise there are no more Tasks
 bool TaskManager::getWork( Task * result ) {
   GRAPPA_FUNCTION_PROFILE( GRAPPA_TASK_GROUP );
@@ -285,6 +285,12 @@ inline void TaskManager::checkWorkShare() {
 ///
 /// @return true if returning valid Task, false if no local Task exists.
 bool TaskManager::tryConsumeLocal( Task * result ) {
+  if ( highPrioPrivateHasEle() ) {
+    *result = highPrioPrivateQ.front();
+    highPrioPrivateQ.pop_front();
+    TaskManagerMetrics::record_private_task_dequeue();
+    return true;
+  }
   if ( privateHasEle() ) {
     *result = privateQ.front();
     privateQ.pop_front();
@@ -326,7 +332,7 @@ inline void TaskManager::checkPull() {
       int goodSteal = 0;
       Core victimId = -1;
 
-      for ( int64_t tryCount=0; 
+      for ( int64_t tryCount=0;
           tryCount < numLocalNodes && !goodSteal && !(publicHasEle() || privateHasEle() || workDone);
           tryCount++ ) {
 
@@ -346,7 +352,7 @@ inline void TaskManager::checkPull() {
       if ( goodSteal ) {
         VLOG(5) << Grappa::current_worker() << " steal " << goodSteal
           << " from Core" << victimId;
-        VLOG(5) << *this; 
+        VLOG(5) << *this;
         TaskManagerMetrics::record_successful_steal_session();
 
         // publicQ should have had some elements in it
@@ -369,16 +375,16 @@ inline void TaskManager::checkPull() {
       GRAPPA_PROFILE_STOP( prof );
     }
   // } else if ( doGQ && Grappa_global_queue_isInit() ) {
-  //   if ( gqPullLock ) { 
+  //   if ( gqPullLock ) {
   //     // artificially limiting to 1 outstanding pull; for
   //     // now we do want a small limit since pulls are
   //     // blocking
   //     gqPullLock = false;
-  // 
+  //
   //     TaskManagerMetrics::record_globalq_pull_start( );  // record the start separately because pull_global() may block Grappa::current_worker() indefinitely
-  //     uint64_t num_received = publicQ.pull_global(); 
-  //     TaskManagerMetrics::record_globalq_pull( num_received ); 
-  // 
+  //     uint64_t num_received = publicQ.pull_global();
+  //     TaskManagerMetrics::record_globalq_pull( num_received );
+  //
   //     gqPullLock = true;
   //   }
   }
@@ -397,7 +403,7 @@ bool TaskManager::waitConsumeAny( Task * result ) {
   checkPull();
 
   if ( !local_available() ) {
-    GRAPPA_PROFILE_CREATE( prof, "worker idle", "(suspended)", GRAPPA_SUSPEND_GROUP ); 
+    GRAPPA_PROFILE_CREATE( prof, "worker idle", "(suspended)", GRAPPA_SUSPEND_GROUP );
     GRAPPA_PROFILE_START( prof );
     if ( !Grappa::thread_idle() ) { // TODO: change to directly use scheduler thread idle
       Grappa::yield(); // TODO: remove this, since thread_idle now suspends always
@@ -411,7 +417,7 @@ bool TaskManager::waitConsumeAny( Task * result ) {
 }
 
 /// Print stream output of TaskManager
-/// 
+///
 /// @param o output stream to append to
 /// @param tm TaskManager to print
 ///
