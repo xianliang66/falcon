@@ -55,10 +55,6 @@ GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_cache_hit);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_cache_miss);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_cache_expired);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_call_all);
-GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_bg_fast_path);
-GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_bg_update);
-GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_bg_renewal);
-
 
 namespace Grappa {
     /// @addtogroup Delegates
@@ -443,9 +439,21 @@ namespace Grappa {
       }
 
       bool valid;
-      impl::cache_info& mycache = GlobalAddress<T>::find_cache(target, &valid);
+      bool is_evicted;
+      GlobalAddress<T> victim;
+      impl::cache_info& mycache = GlobalAddress<T>::find_cache(target, &valid, true,
+          &is_evicted, &victim);
       verify_cache(mycache);
       GlobalAddress<T>::active_cache(mycache);
+
+      if (is_evicted) {
+        Core me = Grappa::mycore();
+        delegate::call<SyncMode::Async, nullptr>(victim.core(), [victim, me] {
+          auto& info = GlobalAddress<T>::find_owner_info(victim);
+          info.copyset[me] = false;
+        });
+      }
+
       if (valid && mycache.valid) {
         /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
           << " read hits.";*/
@@ -526,9 +534,6 @@ retry:
           << " #" << delegate_writes << " write wts "
           << owner_ts.wts << " rts " << owner_ts.rts << " pts " << Grappa::mypts();*/
 
-        if (Grappa::mypts() != pts) {
-          Grappa::spawn<TaskMode::Bound>(bg_renewal<T>, true);
-        }
         delegate_write_latency += (Grappa::timestamp() - start_time);
         return;
       }
@@ -551,9 +556,6 @@ retry:
         << mycache.wts << " rts " << mycache.rts << " pts " << Grappa::mypts();*/
       GlobalAddress<T>::deactive_cache(mycache);
 
-      if (Grappa::mypts() != pts) {
-        Grappa::spawn<TaskMode::Bound>(bg_renewal<T>, true);
-      }
       delegate_write_latency += (Grappa::timestamp() - start_time);
 #elif defined(GRAPPA_WI_CACHE)
       if (target.is_owner()) {
@@ -565,53 +567,41 @@ retry:
         /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
           << " write as owner.";*/
         info.locked = true;
-        LOG(ERROR) << "Core " << Grappa::mycore() << " write begins at " << target.raw_bits();
 
-        CompletionEvent ce1;
-        auto cpyset = info.copyset;
-        int scnt = 0;
         // Broadcast invalidation messages according to the copyset concurrently.
         for (int i = 0; i < info.copyset.size(); i++) {
           if (info.copyset[i] && Grappa::mycore() != i) {
-            scnt++;
-            auto func = [i, target, value, &cpyset, &ce1] {
-              auto r = internal_call<S,C>((Core)i, [target] {
-                bool valid;
-                auto& mycache = GlobalAddress<T>::find_cache(target, &valid, false);
-                if (!valid) {
-                  return InvResponse::Miss;
-                }
-                else {
-                  mycache.valid = false;
-                  return InvResponse::Succ;
-                }
-              });
-              /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
-                << " sends INV as owner to Core " << i << " with result " << r;*/
-              if (r == InvResponse::Miss) cpyset[i] = false;
-              LOG(ERROR) << "Core " << Grappa::mycore() << " sent INV to Core " << i << " at " << target.raw_bits();
-              ce1.complete();
-            };
-            LOG(ERROR) << "Core " << Grappa::mycore() << " spawn INV func to Core " << i << " at " << target.raw_bits();
-            ce1.enroll();
-            spawn(func, Grappa::impl::TaskPrio::HIGH);
-            //func();
+            delegate::call<SyncMode::Async,C>((Core)i, [target] {
+              bool valid;
+              auto& mycache = GlobalAddress<T>::find_cache(target, &valid, false);
+              if (valid) {
+                mycache.valid = false;
+              }
+            });
           }
         }
-        short rand = random();
-        ce1.wait();
-        info.copyset = cpyset;
+        impl::local_gce.wait();
 
         info.locked = false;
-        LOG(ERROR) << "Core " << Grappa::mycore() << " write ends at " << target.raw_bits();
         *target.pointer() = value;
         delegate_write_latency += (Grappa::timestamp() - start_time);
         return;
       }
 
-      impl::cache_info& mycache = GlobalAddress<T>::find_cache(target);
+      bool is_evicted;
+      GlobalAddress<T> victim;
+      impl::cache_info& mycache = GlobalAddress<T>::find_cache(target, nullptr, true,
+          &is_evicted, &victim);
       verify_cache(mycache);
       GlobalAddress<T>::active_cache(mycache);
+
+      if (is_evicted) {
+        Core me = Grappa::mycore();
+        delegate::call<SyncMode::Async, nullptr>(victim.core(), [victim, me] {
+          auto& info = GlobalAddress<T>::find_owner_info(victim);
+          info.copyset[me] = false;
+        });
+      }
 
       /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
         << " write as non-owner.";*/
@@ -634,32 +624,21 @@ retry:
       auto& cpyset = r.object;
 
       // Broadcast invalidation messages according to the copyset concurrently.
-      CompletionEvent ce;
       for (int i = 0; i < cpyset.size(); i++) {
         if (cpyset[i] && i != Grappa::mycore()) {
-          ce.enroll();
-          auto func = [i, target, value, &cpyset, &ce] {
-            auto r = internal_call<S,C>((Core)i, [target, value] {
-              bool valid;
-              auto& mycache = GlobalAddress<T>::find_cache(target, &valid, false);
-              if (!valid) {
-                return false;
-              }
-              else {
-                mycache.valid = false;
-                return true;
-              }
-            });
-            /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
-              << " sends INV as non-owner to Core " << i << " with result " << r;*/
-            if (!r) cpyset[i] = false;
-            ce.complete();
-          };
-          spawn(func);
-          //func();
+          internal_call<SyncMode::Async,C>((Core)i, [target, value] {
+            bool valid;
+            auto& mycache = GlobalAddress<T>::find_cache(target, &valid, false);
+            if (valid) {
+              mycache.valid = false;
+            }
+          });
+          /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
+            << " sends INV as non-owner to Core " << i << " with result " << r;*/
         }
       }
-      ce.wait();
+      impl::local_gce.wait();
+
       cpyset[Grappa::mycore()] = true;
       // Unlock this object and update the copyset.
       internal_call<S,C>(target.core(), [target, value, cpyset] {

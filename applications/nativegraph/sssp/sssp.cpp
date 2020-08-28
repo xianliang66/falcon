@@ -6,7 +6,7 @@
 
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 9, "Log2 number of vertices.");
+DEFINE_int32(scale, 17, "Log2 number of vertices.");
 DEFINE_int32(edgefactor, 34, "Average number of edges per vertex.");
 DEFINE_int64(root, 1, "Index of root vertex.");
 
@@ -90,16 +90,13 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
 #ifdef GRAPPA_TARDIS_CACHE
       Grappa::mypts() += 10;
 #endif
-      if (nupdates > 0)
       LOG(ERROR) << "Core " << Grappa::mycore() << " iteration " << ++iter
         << " updates " << nupdates << " vertices.";
       nupdates = 0;
       if (local_complete) {
-        //LOG(ERROR) << "Core " << Grappa::mycore() << " write terminate.";
         delegate::write(complete_addr + Grappa::mycore(), TERMINATE);
       }
       else {
-        LOG(ERROR) << "Core " << Grappa::mycore() << " write update.";
         delegate::write(complete_addr + Grappa::mycore(), UPDATE);
       }
     }

@@ -131,10 +131,16 @@ public:
   }
 
   static Grappa::impl::cache_info& find_cache( const GlobalAddress<T>& g,
-      bool* valid = nullptr, bool insert_new = true) {
+      bool* valid = nullptr, bool insert_new = true,
+      bool* is_evicted = nullptr,
+      GlobalAddress<T>* evicted_victim = nullptr) {
     std::unordered_map<uintptr_t, Grappa::impl::cache_info>& tardis_cache =
       global_communicator.tardis_cache;
     std::list<uintptr_t>& lru = global_communicator.lru;
+
+    if (is_evicted) {
+      *is_evicted = false;
+    }
 
     auto it = tardis_cache.find(g.raw_bits());
     void *freed_space = nullptr;
@@ -150,6 +156,10 @@ public:
           victim++;
         if (victim != lru.rend()) {
           auto v = tardis_cache.find(*victim);
+          if (is_evicted) {
+            *is_evicted = true;
+            *evicted_victim = GlobalAddress<T>::Raw(*victim);
+          }
           if (v->second.size == sizeof(T)) {
             freed_space = v->second.object;
           }

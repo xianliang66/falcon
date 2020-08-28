@@ -4,7 +4,7 @@
 
 // Cache protocol. Only one of them can be defined
 //#define GRAPPA_TARDIS_CACHE
-#define GRAPPA_WI_CACHE
+//#define GRAPPA_WI_CACHE
 
 #if (defined(GRAPPA_TARDIS_CACHE) || defined(GRAPPA_WI_CACHE))
 #define GRAPPA_CACHE_ENABLE
@@ -36,7 +36,7 @@
 #ifdef GRAPPA_CACHE_ENABLE
 
 #define LEASE 10
-#define MAX_CACHE_NUMBER 256000
+#define MAX_CACHE_NUMBER 1024
 
 typedef uint32_t timestamp_t;
 
