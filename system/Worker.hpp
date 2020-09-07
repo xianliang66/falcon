@@ -74,8 +74,9 @@ class Worker {
   //enum State { RUNNING, SUSPENDED };
 
   public: // TODO: privatize some members
-    Worker() {}
+    Worker() : isSleep(true) {}
 
+    bool isSleep;
   /* used on a context switch */
   // current stack pointer.  Since stack grows down in x86,
   // stack >= base (hopefully!)

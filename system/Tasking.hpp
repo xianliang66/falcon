@@ -158,6 +158,46 @@ namespace Grappa {
           args[0], args[1], args[2], prio );
     }
   }
+#ifdef GRAPPA_WI_CACHE
+  bool is_suspended_delegate(Worker * w);
+  class SuspendedDelegate;
+  void invoke(SuspendedDelegate * c);
+  template< typename TF = decltype(nullptr) >
+  void spawn_inv( TF tf ) {
+    tasks_created++;
+    auto& sched = impl::global_scheduler;
+    for (auto iter = sched.inv_workers.begin();
+        iter != sched.inv_workers.end(); iter++) {
+      if ((*iter)->isSleep) {
+        Worker* w = *iter;
+        if (is_suspended_delegate(w)) {
+          invoke(reinterpret_cast<SuspendedDelegate*>(w));
+        }
+        else {
+          impl::global_scheduler.thread_wake(w);
+        }
+        (*iter)->isSleep = false;
+        break;
+      }
+    }
+    if( sizeof( tf ) > 24 ) { // if it's too big to fit in a task queue entry
+      DVLOG(4) << "Heap allocated task of size " << sizeof(tf);
+      tasks_heap_allocated++;
+
+      struct __attribute__((deprecated("heap allocating private task functor"))) Warning {};
+
+      // heap-allocate copy of functor, passing ownership to spawned task
+      TF * tp = new TF(tf);
+      Grappa::impl::inv_task_manager.spawnLocalPrivate(
+          Grappa::impl::task_heapfunctor_proxy<TF>, tp, tp, tp );
+    } else {
+      /// Shove copy of functor into space used for task arguments.
+      uint64_t * args = reinterpret_cast< uint64_t * >( &tf );
+      Grappa::impl::inv_task_manager.spawnLocalPrivate( Grappa::impl::task_functor_proxy<TF>,
+          args[0], args[1], args[2] );
+    }
+  }
+#endif /* GRAPPA_WI_CACHE */
 
   /// Spawn a task that may be stolen between cores. The task is specified as a functor or lambda,
   /// and must be 24 bytes or less (currently).
@@ -178,13 +218,14 @@ namespace Grappa {
 
   /// @b internal
   template < typename TF >
-  void spawn_worker( TF && tf ) {
+  Worker* spawn_worker( TF && tf ) {
     TF * tp = new TF(tf);
     void * vp = reinterpret_cast< void * >( tp );
     Worker * th = impl::worker_spawn( Grappa::impl::global_scheduler.get_current_thread(), &Grappa::impl::global_scheduler,
                                 Grappa::impl::worker_heapfunctor_proxy<TF>, vp );
     Grappa::impl::global_scheduler.ready( th );
     DVLOG(5) << __PRETTY_FUNCTION__ << " spawned Worker " << th;
+    return th;
   }
 
 
@@ -230,6 +271,9 @@ void run(FP fp) {
 
   // spawn starting number of worker coroutines
   Grappa::impl::global_scheduler.createWorkers( FLAGS_num_starting_workers );
+#if  (defined(GRAPPA_WI_CACHE) && defined(MULTI_TASK))
+  Grappa::impl::global_scheduler.createInvWorkers( FLAGS_num_starting_workers / 8 );
+#endif
   Grappa::impl::global_scheduler.allow_active_workers(-1); // allow all workers to be active
 
   StateTimer::init();

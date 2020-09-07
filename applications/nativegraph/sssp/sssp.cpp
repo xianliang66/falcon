@@ -104,6 +104,9 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
 }
 
 int main(int argc, char* argv[]) {
+#ifndef MULTI_TASK
+  static_assert(false, "Please define MULTI_TASK only in system/TardisCache.hpp");
+#endif
   Grappa::init(&argc, &argv);
   Grappa::run([]{
     int64_t NE = (1L << FLAGS_scale) * FLAGS_edgefactor;

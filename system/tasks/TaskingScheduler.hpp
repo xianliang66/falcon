@@ -41,6 +41,7 @@
 #include <Timestamp.hpp>
 #include <glog/logging.h>
 #include <sstream>
+#include <vector>
 #include "Metrics.hpp"
 #include "HistogramMetric.hpp"
 
@@ -89,7 +90,9 @@ struct task_worker_args;
 /// Worker scheduler that knows about Tasks.
 /// Intended to schedule from a pool of worker threads that execute Tasks.
 class TaskingScheduler : public Scheduler {
-  private:  
+  public:
+    std::vector <Worker*> inv_workers;
+  private:
     /// Queue for Threads that are ready to run
     PrefetchingThreadQueue readyQ;
 
@@ -103,7 +106,7 @@ class TaskingScheduler : public Scheduler {
     Worker * master;
 
     /// Always points the the Worker that is currently running
-    Worker * current_thread; 
+    Worker * current_thread;
     threadid_t nextId;
 
     /// number of idle workers
@@ -111,6 +114,7 @@ class TaskingScheduler : public Scheduler {
 
     /// number of workers assigned to Tasks
     uint64_t num_active_tasks;
+    uint64_t num_active_inv_tasks = 0;
 
     /// Max allowed active workers
     uint64_t max_allowed_active_workers;
@@ -180,7 +184,7 @@ class TaskingScheduler : public Scheduler {
           DVLOG(3) << "sampling histogram";
           Grappa::Metrics::histogram_sample();
 #else
-          Grappa::Metrics::sample();          
+          Grappa::Metrics::sample();
 #endif
         }
 
@@ -203,8 +207,8 @@ class TaskingScheduler : public Scheduler {
           return result;
         }
 
-        
         // check ready tasks
+        //
         result = readyQ.dequeue();
         if (result != NULL) {
           //    DVLOG(5) << current_thread->id << " scheduler: pick ready";
@@ -227,7 +231,7 @@ class TaskingScheduler : public Scheduler {
           }
         }
 
-        
+
         if (FLAGS_poll_on_idle) {
           *(stats.state_timers[ stats.prev_state ]) += (current_ts - prev_ts) / tick_scale;
 
@@ -293,7 +297,7 @@ class TaskingScheduler : public Scheduler {
 
         /// Create new statistics tracking for scheduler
         TaskingSchedulerMetrics( TaskingScheduler * scheduler );
-        
+
         ~TaskingSchedulerMetrics();
 
         void reset();
@@ -359,6 +363,9 @@ class TaskingScheduler : public Scheduler {
     }
 
     void createWorkers( uint64_t num );
+#ifdef GRAPPA_WI_CACHE
+    void createInvWorkers( uint64_t num );
+#endif
     Worker* maybeSpawnCoroutines( );
     void onWorkerStart( );
 
@@ -389,7 +396,7 @@ class TaskingScheduler : public Scheduler {
       stats.reset();
     }
 
-    /// run threads until all exit 
+    /// run threads until all exit
     void run ( );
 
     bool thread_maybe_yield( );
@@ -399,7 +406,7 @@ class TaskingScheduler : public Scheduler {
     void thread_wake( Worker * next );
     void thread_yield_wake( Worker * next );
     void thread_suspend_wake( Worker * next );
-    bool thread_idle( uint64_t total_idle ); 
+    bool thread_idle( uint64_t total_idle );
     bool thread_idle( );
 
     Worker * thread_wait( void **result );
@@ -409,7 +416,8 @@ class TaskingScheduler : public Scheduler {
 
     friend std::ostream& operator<<( std::ostream& o, const TaskingScheduler& ts );
     friend void workerLoop ( Worker *, void * );
-};  
+    friend void inv_workerLoop ( Worker *, void * );
+};
 
 /// Arguments to workerLoop() worker Worker routine
 struct task_worker_args {
@@ -427,7 +435,7 @@ inline bool TaskingScheduler::thread_maybe_yield( ) {
 
   // tick the timestap counter
   Grappa::Timestamp current_ts = Grappa::force_tick();
-  
+
   if( should_run_periodic( current_ts ) ) {
     yielded = true;
     thread_yield();
@@ -438,33 +446,33 @@ inline bool TaskingScheduler::thread_maybe_yield( ) {
 
 
 
-/// Yield the CPU to the next Worker on this scheduler. 
+/// Yield the CPU to the next Worker on this scheduler.
 /// Cannot be called during the master Worker.
 inline bool TaskingScheduler::thread_yield( ) {
   CHECK( current_thread != master ) << "can't yield on a system Worker";
   StateTimer::enterState_scheduler();
 
-  ready( current_thread ); 
+  ready( current_thread );
 
   Worker * yieldedThr = current_thread;
 
   Worker * next = nextCoroutine( );
+
   bool gotRescheduled = (next == yieldedThr);
 
   current_thread = next;
-  //DVLOG(5) << "Worker " << yieldedThr->id << " yielding to " << next->id << (gotRescheduled ? " (same thread)." : " (diff thread).");
   thread_context_switch( yieldedThr, next, NULL);
 
   return gotRescheduled; // 0=another ran; 1=me got rescheduled immediately
 }
 
-/// For periodic threads: yield the CPU to the next Worker on this scheduler.  
+/// For periodic threads: yield the CPU to the next Worker on this scheduler.
 /// Cannot be called during the master Worker.
 inline bool TaskingScheduler::thread_yield_periodic( ) {
   CHECK( current_thread != master ) << "can't yield on a system Worker";
   StateTimer::enterState_scheduler();
 
-  periodic( current_thread ); 
+  periodic( current_thread );
 
   Worker * yieldedThr = current_thread;
 
@@ -496,7 +504,7 @@ inline void TaskingScheduler::thread_suspend( ) {
 
 /// Wake a suspended Worker by putting it on the run queue.
 /// For now, waking a running Worker is a fatal error.
-/// For now, waking a queued Worker is also a fatal error. 
+/// For now, waking a queued Worker is also a fatal error.
 /// For now, can only wake a Worker on your scheduler
 inline void TaskingScheduler::thread_wake( Worker * next ) {
   CHECK( next->sched == static_cast<Scheduler*>(this) ) << "can only wake a Worker on your scheduler (next="<<(void*) next << " next->sched="<<(void*)next->sched <<" this="<<(void*)this;
@@ -512,8 +520,8 @@ inline void TaskingScheduler::thread_wake( Worker * next ) {
 
 /// Yield the current Worker and wake a suspended thread.
 /// For now, waking a running Worker is a fatal error.
-/// For now, waking a queued Worker is also a fatal error. 
-inline void TaskingScheduler::thread_yield_wake( Worker * next ) {    
+/// For now, waking a queued Worker is also a fatal error.
+inline void TaskingScheduler::thread_yield_wake( Worker * next ) {
   CHECK( current_thread != master ) << "can't yield on a system Worker";
   CHECK( next->sched == static_cast<Scheduler*>(this) ) << "can only wake a Worker on your scheduler";
   CHECK( next->next == NULL ) << "woken Worker should not be on any queue";
@@ -531,7 +539,7 @@ inline void TaskingScheduler::thread_yield_wake( Worker * next ) {
 
 /// Suspend current Worker and wake a suspended thread.
 /// For now, waking a running Worker is a fatal error.
-/// For now, waking a queued Worker is also a fatal error. 
+/// For now, waking a queued Worker is also a fatal error.
 inline void TaskingScheduler::thread_suspend_wake( Worker *next ) {
   CHECK( current_thread != master ) << "can't yield on a system Worker";
   CHECK( next->next == NULL ) << "woken Worker should not be on any queue";
@@ -553,13 +561,9 @@ inline void TaskingScheduler::thread_suspend_wake( Worker *next ) {
 /// particular resource, just waiting to be woken.
 /// @param total_idle the total number of possible idle threads
 inline bool TaskingScheduler::thread_idle( uint64_t total_idle ) {
-  CHECK( num_idle+1 <= total_idle ) << "number of idle threads should not be more than total"
+  CHECK( num_idle+1 <= total_idle ) <<
+    "number of idle threads should not be more than total"
     << " (" << num_idle+1 << " / " << total_idle << ")";
-  if (num_idle+1 == total_idle) {
-    DVLOG(5) << "going idle and is last";
-  } else {
-    DVLOG(5) << "going idle and is " << num_idle+1 << " of " << total_idle;
-  }
 
   num_idle++;
   current_thread->idle = 1;

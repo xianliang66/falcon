@@ -83,13 +83,13 @@ TaskingScheduler global_scheduler;
   , task_manager ( NULL )
   , num_workers ( 0 )
   , work_args( NULL )
-  , previous_periodic_ts( 0 ) 
-  , periodic_poll_ticks( 0 ) 
+  , previous_periodic_ts( 0 )
+  , periodic_poll_ticks( 0 )
   , in_no_switch_region_( false )
   , prev_ts( 0 )
   , prev_stats_blob_ts( 0 )
     , stats( this )
-{ 
+{
   Grappa::tick();
   prev_ts = Grappa::timestamp();
 }
@@ -173,7 +173,7 @@ Worker * TaskingScheduler::getWorker () {
 void workerLoop ( Worker * me, void* args ) {
   task_worker_args* wargs = (task_worker_args*) args;
   TaskManager* tasks = wargs->tasks;
-  TaskingScheduler * sched = wargs->scheduler; 
+  TaskingScheduler * sched = wargs->scheduler;
 
   sched->onWorkerStart();
 
@@ -190,6 +190,7 @@ void workerLoop ( Worker * me, void* args ) {
     StateTimer::setThreadState( StateTimer::USER );
     StateTimer::enterState_user();
     {
+      //LOG(ERROR) << "Im non-inv " << sched->current_thread->id << " is scheduled!";
       GRAPPA_PROFILE( exectimer, "user_execution", "", GRAPPA_USER_GROUP );
       nextTask.execute();
     }
@@ -199,6 +200,44 @@ void workerLoop ( Worker * me, void* args ) {
     sched->thread_yield( ); // yield to the scheduler
   }
 }
+
+#ifdef GRAPPA_WI_CACHE
+
+void inv_workerLoop( Worker* me, void* args ) {
+  TaskManager* tasks = &Grappa::impl::inv_task_manager;
+  TaskingScheduler * sched = &Grappa::impl::global_scheduler;
+
+  sched->onWorkerStart();
+
+  StateTimer::setThreadState( StateTimer::FINDWORK );
+  StateTimer::enterState_findwork();
+
+  Task result;
+
+  while ( true ) {
+    // block until receive work or termination reached
+    while (!tasks->getWork(&result, false)) {
+      //sched->thread_idle();
+      sched->current_thread->isSleep = true;
+      sched->thread_suspend();
+    }
+
+    sched->num_active_tasks++;
+    sched->num_active_inv_tasks++;
+    StateTimer::setThreadState( StateTimer::USER );
+    StateTimer::enterState_user();
+    {
+      GRAPPA_PROFILE( exectimer, "user_execution", "", GRAPPA_USER_GROUP );
+      result.execute();
+    }
+    StateTimer::setThreadState( StateTimer::FINDWORK );
+    sched->num_active_inv_tasks--;
+    sched->num_active_tasks--;
+
+    sched->thread_yield( ); // yield to the scheduler
+  }
+}
+#endif
 
 
 /// create worker Threads for executing Tasks
@@ -216,6 +255,24 @@ void TaskingScheduler::createWorkers( uint64_t num ) {
   }
   num_idle += num;
 }
+
+#ifdef GRAPPA_WI_CACHE
+/// create worker Threads for executing Tasks
+///
+/// @param num how many workers to create
+void TaskingScheduler::createInvWorkers( uint64_t num ) {
+  num_workers += num;
+  for (uint64_t i=0; i<num; i++) {
+    // spawn a new worker Worker
+    Worker * t = impl::worker_spawn( current_thread, this, inv_workerLoop, nullptr);
+    inv_workers.push_back(t);
+
+    // place the Worker in the pool of idle workers
+    unassigned( t );
+  }
+  num_idle += num;
+}
+#endif
 
 #define BASIC_MAX_WORKERS 2
 /// Give the scheduler a chance to spawn more worker Threads,
@@ -259,10 +316,10 @@ std::ostream& operator<<( std::ostream& o, const TaskingScheduler& ts ) {
  *
  */
 
-TaskingScheduler::TaskingSchedulerMetrics::TaskingSchedulerMetrics() { active_task_log = new short[16]; }  
-        
+TaskingScheduler::TaskingSchedulerMetrics::TaskingSchedulerMetrics() { active_task_log = new short[16]; }
+
 TaskingScheduler::TaskingSchedulerMetrics::TaskingSchedulerMetrics( TaskingScheduler * scheduler )
-  : sched( scheduler ) 
+  : sched( scheduler )
   , state_timers()
     , prev_state( StateIdle )
 
@@ -275,16 +332,16 @@ TaskingScheduler::TaskingSchedulerMetrics::TaskingSchedulerMetrics( TaskingSched
   active_task_log = new short[1L<<20];
   reset();
 }
-        
+
 TaskingScheduler::TaskingSchedulerMetrics::~TaskingSchedulerMetrics() {
 // XXX: not copy-safe, so pointer can be invalid
 /* delete[] active_task_log; */
 }
-        
+
 void TaskingScheduler::TaskingSchedulerMetrics::reset() {
   task_log_index = 0;
 }
-        
+
 void TaskingScheduler::TaskingSchedulerMetrics::print_active_task_log() {
 #ifdef DEBUG
   if (task_log_index == 0) return;
@@ -301,7 +358,7 @@ void TaskingScheduler::TaskingSchedulerMetrics::sample() {
   ready_tasks_sampled += sched->readyQ.length();
   idle_workers_sampled += sched->num_idle;
 
-#ifdef DEBUG  
+#ifdef DEBUG
   if ((scheduler_samples.value() % 1024) == 0) {
     active_task_log[task_log_index++] = sched->num_active_tasks;
   }

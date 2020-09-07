@@ -53,7 +53,7 @@ typedef int16_t Core;
 /// A function pointer and 3 64-bit arguments.
 class Task {
 
-  private:
+  public:
     // function pointer that takes three arbitrary 64-bit (ptr-size) arguments
     void (* fn_p)(void*,void*,void*);
 
@@ -194,13 +194,13 @@ class TaskManager {
     /// Push public task
     void push_public_task( Task t );
 
-    /// @return true if local shared queue has elements
-    bool publicHasEle() const;
-
     /// @return true if Core-private queue has elements
     bool privateHasEle() const {
       return !privateQ.empty();
     }
+
+    /// @return true if local shared queue has elements
+    bool publicHasEle() const;
 
     /// @return true if high-priority Core-private queue has elements
     bool highPrioPrivateHasEle() const {
@@ -223,7 +223,6 @@ class TaskManager {
     void tryPushToGlobal();
     void checkWorkShare();
 
-
     /// Output internal state.
     ///
     /// @param o existing output stream to append to
@@ -231,10 +230,7 @@ class TaskManager {
     /// @return new output stream
     std::ostream& dump( std::ostream& o = std::cout, const char * terminator = "" ) const;
 
-
   public:
-
-
     //TaskManager (bool doSteal, Core localId, Core* neighbors, Core numLocalNodes, int chunkSize, int cbint);
     TaskManager();
     void init (Core localId, Core* neighbors, Core numLocalNodes);
@@ -270,7 +266,7 @@ class TaskManager {
     uint64_t numLocalPublicTasks() const;
     uint64_t numLocalPrivateTasks() const;
 
-    bool getWork ( Task * result );
+    bool getWork ( Task * result, bool blocking = true );
 
     bool available ( ) const;
     bool local_available ( ) const;
@@ -331,7 +327,7 @@ inline void TaskManager::spawnPublic( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A
 /// @param arg1 second task argument
 /// @param arg2 third task argument
 template < typename A0, typename A1, typename A2 >
-inline void TaskManager::spawnLocalPrivate( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A2 arg2,
+void TaskManager::spawnLocalPrivate( void (*f)(A0, A1, A2), A0 arg0, A1 arg1, A2 arg2,
     Grappa::impl::TaskPrio prio ) {
   Task newtask = createTask( f, arg0, arg1, arg2 );
 #if PRIVATEQ_LIFO
@@ -342,6 +338,7 @@ inline void TaskManager::spawnLocalPrivate( void (*f)(A0, A1, A2), A0 arg0, A1 a
       privateQ.push_front(newtask); break;
     case Grappa::impl::TaskPrio::HIGH:
       highPrioPrivateQ.push_front(newtask); break;
+    default: CHECK(0);
   }
 #else
   switch (prio) {
@@ -351,9 +348,9 @@ inline void TaskManager::spawnLocalPrivate( void (*f)(A0, A1, A2), A0 arg0, A1 a
       privateQ.push_back(newtask); break;
     case Grappa::impl::TaskPrio::HIGH:
       highPrioPrivateQ.push_back(newtask); break;
+    default: CHECK(0);
   }
 #endif
-
   /// note from cbarrier implementation
   /* no notification necessary since
    * presence of a local spawn means
@@ -402,6 +399,9 @@ inline void TaskManager::spawnRemotePrivate( void (*f)(A0, A1, A2), A0 arg0, A1 
 
 /// system task manager
 extern TaskManager global_task_manager;
+#ifdef GRAPPA_WI_CACHE
+extern TaskManager inv_task_manager;
+#endif
 
 } // namespace impl
 } // namespace Grappa

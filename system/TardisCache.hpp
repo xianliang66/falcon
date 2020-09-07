@@ -2,9 +2,18 @@
 #include <bitset>
 #include <list>
 
+
+/*
+ * An awful hack. For WI, if main worker uses multiple tasks, then writers
+ * should use extra inv workers; if main worker uses multiple tasks, then
+ * writers should use normal co-routines.
+ */
+//#define MULTI_TASK
+#define SINGLE_TASK
+
 // Cache protocol. Only one of them can be defined
 //#define GRAPPA_TARDIS_CACHE
-//#define GRAPPA_WI_CACHE
+#define GRAPPA_WI_CACHE
 
 #if (defined(GRAPPA_TARDIS_CACHE) || defined(GRAPPA_WI_CACHE))
 #define GRAPPA_CACHE_ENABLE
@@ -36,7 +45,7 @@
 #ifdef GRAPPA_CACHE_ENABLE
 
 #define LEASE 10
-#define MAX_CACHE_NUMBER 1024
+#define MAX_CACHE_NUMBER 4096
 
 typedef uint32_t timestamp_t;
 
@@ -102,6 +111,7 @@ struct cache_info : cache_info_base {
   cache_info() : cache_info_base(), valid(false) {}
   cache_info(void *obj, size_t sz) : cache_info_base(obj, sz), valid(false) {}
 };
+
 #endif // GRAPPA_WI_CACHE
 
 }

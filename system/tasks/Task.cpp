@@ -97,12 +97,15 @@ namespace Grappa {
   namespace impl {
 
 TaskManager global_task_manager;
+#ifdef GRAPPA_WI_CACHE
+TaskManager inv_task_manager;
+#endif
 
 //DEFINE_bool(TaskManager_events, true, "Enable tracing of events in TaskManager.");
 
 /// Create an uninitialized TaskManager
 /// init() must subsequently be called before fully initialized.
-  TaskManager::TaskManager ( )
+  TaskManager::TaskManager ()
   : privateQ( )
   , workDone( false )
   , doSteal( false )
@@ -237,8 +240,17 @@ inline void TaskManager::tryPushToGlobal() {
 /// @param result buffer for the returned Task
 ///
 /// @return true if result is valid, otherwise there are no more Tasks
-bool TaskManager::getWork( Task * result ) {
+bool TaskManager::getWork( Task * result, bool blocking ) {
   GRAPPA_FUNCTION_PROFILE( GRAPPA_TASK_GROUP );
+
+  if (!blocking) {
+    if (privateHasEle()) {
+      *result = privateQ.front();
+      privateQ.pop_front();
+      return true;
+    }
+    return false;
+  }
 
   while ( !workDone ) {
 
@@ -307,12 +319,12 @@ bool TaskManager::tryConsumeLocal( Task * result ) {
     checkWorkShare();
 
     if ( publicHasEle() ) {
-      DVLOG(5) << "consuming local task";
       *result = publicQ.peek();
       publicQ.pop( );
       TaskManagerMetrics::record_public_task_dequeue();
       return true;
-    } else {
+    }
+    else {
       return false;
     }
   }

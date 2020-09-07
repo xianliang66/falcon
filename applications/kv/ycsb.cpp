@@ -7,8 +7,8 @@
 #define ZIPF_ALPHA 0
 // YCSB template parameters
 #define recordcount 10000
-#define operationcount 5000000
-#define readproportion .0
+#define operationcount 500000
+#define readproportion .8
 #define updateproportion (1 - readproportion)
 // Percentage of data items that constitute the hot set
 #define hotspotdatafraction .2
@@ -127,6 +127,9 @@ static void execute_operation(db db) {
 }
 
 int main(int argc, char * argv[]) {
+#ifndef SINGLE_TASK
+  static_assert(false, "Please define SINGLE_TASK only in system/TardisCache.hpp");
+#endif
   init( &argc, &argv );
   run([]{
     double begin_time = 0.0;
