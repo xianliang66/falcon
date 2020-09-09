@@ -613,20 +613,35 @@ retry:
       }
       auto& cpyset = r.object;
 
+      CompletionEvent ce;
       // Broadcast invalidation messages according to the copyset concurrently.
       for (int i = 0; i < cpyset.size(); i++) {
         if (cpyset[i] && i != Grappa::mycore()) {
-          delegate::internal_call((Core)i, [target, value] {
-            bool valid;
-            auto& mycache = GlobalAddress<T>::find_cache(target, &valid, false);
-            if (valid) {
-              mycache.valid = false;
+          ce.enroll();
+          auto func = [i, target, &ce, &cpyset] {
+            auto r = delegate::internal_call((Core)i, [target] {
+              bool valid;
+              auto& mycache = GlobalAddress<T>::find_cache(target, &valid, false);
+              if (valid) {
+                mycache.valid = false;
+                return InvResponse::Succ;
+              }
+              else {
+                return InvResponse::Miss;
+              }
+            });
+            if (r == InvResponse::Miss) {
+              cpyset[i] = false;
             }
-          });
+            ce.complete();
+          };
           /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
             << " sends INV as non-owner to Core " << i << " with result " << r;*/
+          spawn(func);
         }
       }
+
+      ce.wait();
 
       cpyset[Grappa::mycore()] = true;
       // Unlock this object and update the copyset.

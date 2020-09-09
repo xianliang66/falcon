@@ -2,13 +2,13 @@
 #include <cstdlib>
 #include <cmath>
 
-//#define CONSTANT_DISTRIBUTION
-#define ZIPF_DISTRIBUTION
+#define CONSTANT_DISTRIBUTION
+//#define ZIPF_DISTRIBUTION
 #define ZIPF_ALPHA 0
 // YCSB template parameters
 #define recordcount 10000
-#define operationcount 500000
-#define readproportion .8
+#define operationcount 5000000
+#define readproportion .9
 #define updateproportion (1 - readproportion)
 // Percentage of data items that constitute the hot set
 #define hotspotdatafraction .2
