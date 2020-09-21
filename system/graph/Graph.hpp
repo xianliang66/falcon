@@ -54,14 +54,11 @@
 #include <mpi.h>
 #endif
 
-static Grappa::GlobalCompletionEvent graph_gce;
-
 namespace Grappa {
   /// @addtogroup Graph
   /// @{
 
-  /// Currently just an overload for int64, may someday be used for distinguishing parameters in forall().
-  using VertexID = int64_t;
+  using VertexID = uint64_t;
 
   /// Empty struct, for specifying lack of either Vertex or Edge data in @ref Graph.
   struct Empty {
@@ -198,7 +195,7 @@ namespace Grappa {
     GlobalAddress<Vertex> vs;
     int64_t nv;
 
-    std::vector <VertexID> owned;
+    std::vector <int> owned;
     // Adjacent list
     std::vector <std::vector<Edge>> edge_storage;
 
@@ -220,12 +217,9 @@ namespace Grappa {
     }
 
     int storage_idx(VertexID v) {
-      for (unsigned i = 0; i < owned.size(); i++) {
-        if (owned[i] == v) {
-          return i;
-        }
-      }
-      CHECK(0) << "Vertex " << v << " doesn't exist.";
+      int idx = owned[v];
+      CHECK(idx > -1) << "Vertex " << v << " doesn't exist.";
+      return idx;
     }
 
     std::vector<VertexID> get_adj(VertexID id) {
@@ -240,15 +234,13 @@ namespace Grappa {
     Edge get_edge(VertexID s, VertexID d) {
       CHECK(s != d);
       auto self = this->self;
-      return delegate::call((vs+s).core(), [self, s, d] {
-        auto adj = self->edge_storage[self->storage_idx(s)];
-        for (auto i = adj.begin(); i != adj.end(); i++) {
-          if (i->toId == d) {
-            return *i;
-          }
+      auto adj = self->edge_storage[self->storage_idx(s)];
+      for (auto i = adj.begin(); i != adj.end(); i++) {
+        if (i->toId == d) {
+          return *i;
         }
-        CHECK(0) << "Edge " << s << "==" << d << " doesn't exist.";
-      });
+      }
+      CHECK(0) << "Edge " << s << "==" << d << " doesn't exist.";
     }
 
     void destroy() {
@@ -256,27 +248,6 @@ namespace Grappa {
       global_free(this->vs);
       call_on_all_cores([self]{ self->~Graph(); });
       global_free(self);
-    }
-
-    template< int LEVEL = 0 >
-    static void dump(GlobalAddress<Graph> g) {
-      for (unsigned i = 0; i < g->edge_storage.size(); i++) {
-        for (unsigned j = 0; j < g->edge_storage[i].size(); j++) {
-          LOG(INFO) << "<" << g->owned[i] << ">" << " " <<
-            g->edge_storage[i][j].toId;
-        }
-      }
-    }
-
-    template< int LEVEL = 0, typename F = nullptr_t >
-    void dump(F print_vertex) {
-      for (unsigned i = 0; i < edge_storage.size(); i++) {
-        for (unsigned j = 0; j < edge_storage[i].size(); j++) {
-          std::stringstream ss;
-          ss << "<" << owned[i] << ">" << " " << edge_storage[i][j].toId;
-          print_vertex(ss, vs+owned[i]);
-        }
-      }
     }
 
     // Constructor
@@ -301,15 +272,24 @@ namespace Grappa {
   GlobalAddress<Graph<V,E>> Graph<V,E>::create(const TupleGraph& tg,
       bool directed, bool solo_invalid) {
     VLOG(1) << "Graph: " << (directed ? "directed" : "undirected");
-    double t;
     auto g = symmetric_global_alloc<Graph>();
 
     // find nv
-    t = walltime();
-    forall(tg.edges, tg.nedge, [g](TupleGraph::Edge& e){
-      if (e.v0 > g->nv) { g->nv = e.v0; }
-      if (e.v1 > g->nv) { g->nv = e.v1; }
+    on_all_cores([g, tg] {
+      uint64_t max_nv = 0; 
+      for (size_t i = 0; i < tg.nedge; i++) {
+        if ((tg.edges + i).core() == Grappa::mycore()) {
+          auto e = delegate::read<SyncMode::Blocking,CacheMode::WriteThrough>
+            (tg.edges + i);
+          VertexID s = e.v0;
+          VertexID d = e.v1;
+          if (s > max_nv) max_nv = s;
+          if (d > max_nv) max_nv = d;
+        }
+      }
+      g->nv = max_nv;
     });
+
     on_all_cores([g]{
       g->self = g;
       g->nv = Grappa::allreduce<int64_t,collective_max>(g->nv) + 1;
@@ -321,56 +301,46 @@ namespace Grappa {
         new (&v) Vertex();
       }
     });
-    t = walltime();
 
     // Caculate number of owned vertices for each core.
     on_all_cores([g] {
       for (VertexID i = 0; i < g->nv; i++) {
+        g->owned.push_back(-1);
         if ((g->vs+i).core() == Grappa::mycore()) {
+          g->owned[i] = (int)g->edge_storage.size();
           g->edge_storage.push_back(std::vector <Edge> ());
-          g->owned.push_back(i);
         }
       }
     });
 
     // Set topology of graph
-    on_all_cores([g,tg,directed] {
-      for (size_t i=0; i<tg.nedge; i++) {
-        auto func = [g,tg,directed,i] {
+    on_all_cores([g, tg, directed] {
+      for (size_t i = 0; i < tg.nedge; i++) {
+        if ((tg.edges + i).core() == Grappa::mycore()) {
           auto e = delegate::read<SyncMode::Blocking,CacheMode::WriteThrough>
             (tg.edges + i);
           VertexID s = e.v0;
           VertexID d = e.v1;
           // No self loops
           if (s == d) {
-            return;
+            continue;
           }
-          CHECK_LT(s, g->nv); CHECK_LT(d, g->nv);
-          if ((g->vs+s).core() == Grappa::mycore()) {
+          auto func1 = [g, s, d] {
+            CHECK_LT(s, g->nv); CHECK_LT(d, g->nv);
             auto& v = g->edge_storage[g->storage_idx(s)];
-            for (auto i = v.begin(); i != v.end(); i++) {
-              // Replicated Edges!
-              if (d == i->toId) {
-                return;
-              }
-            }
             v.push_back(Edge(s, d));
-          }
-          if (!directed && (g->vs+d).core() == Grappa::mycore()) {
+          };
+          auto func2 = [g, d, s] {
+            CHECK_LT(s, g->nv); CHECK_LT(d, g->nv);
             auto& v = g->edge_storage[g->storage_idx(d)];
-            for (auto i = v.begin(); i != v.end(); i++) {
-              // Replicated Edges!
-              if (s == i->toId) {
-                return;
-              }
-            }
             v.push_back(Edge(d, s));
+          };
+          delegate::call<SyncMode::Async>((g->vs + s).core(), func1);
+          if (!directed) {
+            delegate::call<SyncMode::Async>((g->vs + d).core(), func2);
           }
-        };
-        // Faster!
-        spawnRemote<&graph_gce>(Grappa::mycore(), func);
+        }
       }
-      graph_gce.wait();
     });
 
     VLOG(1) << "-- vertices: " << g->nv;

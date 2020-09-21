@@ -6,7 +6,7 @@ extern int64_t nedge_traversed;
 /* Vertex specific data */
 struct SSSPData {
   double dist;
-  int64_t parent;
+  VertexID parent;
 
   SSSPData() {
     dist = std::numeric_limits<double>::max();
@@ -31,7 +31,7 @@ struct SSSPEdgeData {
   // (source, dest). The value should be agreed by all cores.
   SSSPEdgeData(int i, int j) {
     int s = (i + ~12)* (i + 0x7)* (j +~12)* (j +0x7)+ ~264;
-    weight = hash((char *)&s, sizeof(int)) % 1024;
+    weight = hash((char *)&s, sizeof(weight)) % 1024;
   }
   SSSPEdgeData() {}
 };

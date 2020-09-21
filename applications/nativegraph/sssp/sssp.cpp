@@ -6,7 +6,7 @@
 
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 14, "Log2 number of vertices.");
+DEFINE_int32(scale, 22, "Log2 number of vertices.");
 DEFINE_int32(edgefactor, 34, "Average number of edges per vertex.");
 DEFINE_int64(root, 1, "Index of root vertex.");
 
@@ -36,7 +36,6 @@ static bool terminated(GlobalAddress<thread_state> complete_addr) {
 }
 
 static int nupdates = 0;
-static CompletionEvent ce;
 
 void do_sssp(GlobalAddress<G> &g, int64_t root) {
     // set zero value for root distance and
@@ -56,12 +55,13 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
     on_all_cores([g,complete_addr]{
       // Remote call async
       int iter = 0;
+      CompletionEvent ce;
       while (!terminated(complete_addr)) {
         local_complete = true;
         for (VertexID id = 0; id < g->nv; id++) {
           if ((g->vs+id).core() == Grappa::mycore()) {
             ce.enroll();
-            auto func = [g,id] {
+            auto func = [g, id, &ce] {
               bool update = false;
               auto v = delegate::read(g->vs+id);
               std::vector <VertexID> adjs = g->get_adj(id);
@@ -83,7 +83,9 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
               ce.complete();
             };
             spawn(func);
-            //func();
+            if (ce.get_count() >= 10240) {
+              ce.wait();
+            }
         }
       }
       ce.wait();
@@ -118,6 +120,7 @@ int main(int argc, char* argv[]) {
     // generate "NE" edge tuples, sampling vertices using the
     // Graph500 Kronecker generator to get a power-law graph
     auto tg = TupleGraph::Kronecker(FLAGS_scale, NE, 111, 222);
+    //auto tg = TupleGraph::Load("twitter_rv.net", "tsv");
 
     // create graph with incorporated Vertex
     auto g = G::Undirected( tg );

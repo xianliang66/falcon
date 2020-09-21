@@ -130,6 +130,8 @@ void local_load_bintsv4( const char * filename,
 
 /// helper method for parallel load of a single file
 static std::vector< Grappa::TupleGraph::Edge > read_edges;
+static size_t lineno = 0;
+
 TupleGraph TupleGraph::load_tsv( std::string path ) {
   // make sure file exists
   CHECK( fs::exists( path ) ) << "File not found.";
@@ -148,45 +150,41 @@ TupleGraph TupleGraph::load_tsv( std::string path ) {
   Core mycore = Grappa::mycore();
   auto bytes_each_core = file_size / Grappa::cores();
 
+  // Find how many lines are there.
+  on_all_cores( [=] {
+      std::ifstream infile( filename, std::ios_base::in );
+      size_t start_offset = bytes_each_core * Grappa::mycore();
+      size_t end_offset = start_offset + bytes_each_core;
+      infile.seekg( start_offset );
+
+      while ( infile.good() && start_offset < end_offset ) {
+        std::string str;
+        std::getline( infile, str );
+        start_offset = infile.tellg();
+        if (str[0] != '#') {
+          lineno++;
+        }
+      }
+  });
+
+  auto nedge = Grappa::reduce<size_t,collective_add>(&lineno);
+  TupleGraph tg( nedge );
+  auto edges = tg.edges;
+
+  auto edges_each_core = (nedge + Grappa::cores()) / Grappa::cores();
+
   // read into temporary buffer
   on_all_cores( [=] {
       // use standard C++/POSIX IO
 
-      // make one core take any data remaining after truncation
-      auto my_bytes_each_core = bytes_each_core;
-      if( Grappa::mycore() == 0 ) {
-        my_bytes_each_core += file_size - (bytes_each_core * Grappa::cores());
-      }
-      
-      // compute initial offset into ASCII file
-      // TODO: fix this with scan
-      local_offset = 0; // do on all cores
-      Grappa::barrier();
-      int64_t start_offset = Grappa::delegate::fetch_and_add( make_global( &local_offset, 0 ),
-                                                              my_bytes_each_core );
-      Grappa::barrier();
-      int64_t end_offset = start_offset + my_bytes_each_core;
-
-      DVLOG(7) << "Reading about " << my_bytes_each_core
-               << " bytes starting at " << start_offset
-               << " of " << file_size;
+      size_t start_lineno = Grappa::mycore() * edges_each_core;
+      size_t end_lineno = std::min<size_t>(start_lineno + edges_each_core, nedge);
       
       // start reading at start offset
       std::ifstream infile( filename, std::ios_base::in );
-      infile.seekg( start_offset );
-
-      if( start_offset > 0 ) {
-        // move past next newline so we start parsing from a record boundary
-        std::string s;
-        std::getline( infile, s );
-        DVLOG(6) << "Skipped '" << s << "'";
-      }
-      
-      start_offset = infile.tellg();
-      DVLOG(6) << "Start reading at " << start_offset;
 
       // read up to one entry past the end_offset
-      while( infile.good() && start_offset < end_offset ) {
+      while( infile.good() && start_lineno < end_lineno ) {
         int64_t v0 = -1;
         int64_t v1 = -1;
         if( infile.peek() == '#' ) { // if a comment
@@ -199,93 +197,21 @@ TupleGraph TupleGraph::load_tsv( std::string path ) {
           Edge e = { v0, v1 };
           DVLOG(6) << "Read " << v0 << " -> " << v1;
           read_edges.push_back( e );
-          start_offset = infile.tellg();
+          start_lineno++;
         }
       }
 
-      DVLOG(6) << "Done reading at " << start_offset << " end_offset " << end_offset;
-      
-      // collect sizes
-      local_offset = read_edges.size();
-      DVLOG(7) << "Read " << local_offset << " edges";
-    } );
-
-  auto nedge = Grappa::reduce<int64_t,collective_add>(&local_offset);
-  
-  TupleGraph tg( nedge );
-  auto edges = tg.edges;
-  //auto leftovers = GlobalVector<int64_t>::create(N);
-
-  on_all_cores( [=] {
       Edge * local_ptr = edges.localize();
       Edge * local_end = (edges+nedge).localize();
       size_t local_count = local_end - local_ptr;
       size_t read_count = read_edges.size();
 
-      DVLOG(7) << "local_count " << local_count
-               << " read_count " << read_count;
-      
+      // We'll lost some edges here...
       // copy everything in our read buffer that fits locally
-      auto local_max = std::min( local_count, read_count );
-      std::memcpy( local_ptr, &read_edges[0], local_max * sizeof(Edge) );
-      local_offset = local_max;
+      std::memcpy( local_ptr, &read_edges[0], local_count * sizeof(Edge) );
+
       Grappa::barrier();
-
-      // get rid of remaining edges
-      auto mycore = Grappa::mycore();
-      auto likely_consumer = (mycore + 1) % Grappa::cores();
-      while( local_max < read_count ) {
-        Edge e = read_edges[local_max];
-        DVLOG(7) << "Looking for somewhere to place edge " << local_max;
-        
-        int retval = delegate::call( likely_consumer, [=] ()->int {
-            Edge * local_ptr = edges.localize();
-            Edge * local_end = (edges+nedge).localize();
-            auto local_count = local_end - local_ptr;
-
-            DVLOG(7) << "Trying to place edge " << local_max
-                      << " on core " << Grappa::mycore()
-                      << " with local_offset " << local_offset
-                      << " and local_count " << local_count;
-            
-            // do we have space to insert here?
-            if( local_offset < local_count ) {
-              // yes, so do so
-              local_ptr[local_offset] = e;
-              local_offset++;
-
-              if( local_offset < local_count ) {
-                DVLOG(7) << "Succeeded with space available";
-                return 0; // succeeded with more space available
-              } else {
-                DVLOG(7) << "Succeeded with no more space available";
-                return 1; // succeeded with no more space available
-              }
-            } else {
-              // no, so return nack.
-              DVLOG(7) << "Failed with no more space available";
-              return -1; // did not succeed
-            }
-          } );
-
-        // insert succeeded, so move to next edge
-        if( retval >= 0 ) {
-          local_max++;
-        }
-
-        // no more space available on target, so move to next core
-        if( local_max < read_count && retval != 0 ) {
-          likely_consumer = (likely_consumer + 1) % Grappa::cores();
-          CHECK_NE( likely_consumer, Grappa::mycore() ) << "No more space to place edge on cluster?";
-        }
-      }
-      
-      // wait for everybody else to fill in our remaining spaces
-      Grappa::barrier();
-      
-      // discard temporary read buffer
-      read_edges.clear();
-    } );
+  });
 
   // done!
   return tg;

@@ -198,7 +198,7 @@ namespace Grappa {
     template< SyncMode S = SyncMode::Blocking,
               GlobalCompletionEvent * C = &impl::local_gce,
               typename F = decltype(nullptr) >
-    auto internal_call(Core dest, F f) -> AUTO_INVOKE((impl::call(dest, f,
+    auto internal_call(Core dest, F f) -> AUTO_INVOKE((impl::Specializer<S,C,F>::call(dest, f,
             &F::operator())));
 
     template< SyncMode S = SyncMode::Blocking,
@@ -207,7 +207,7 @@ namespace Grappa {
     auto call(Core dest, F f) -> decltype((impl::Specializer<S,C,F>::call(dest, f,
             &F::operator()))) {
       delegate_call_all++;
-      return internal_call(dest, f);
+      return internal_call<S,C>(dest, f);
     }
 
   } // namespace delegate
@@ -672,7 +672,7 @@ retry:
               typename T = decltype(nullptr),
               typename U = decltype(nullptr) >
     T fetch_and_add(GlobalAddress<T> target, U inc) {
-      return internal_call(target.core(), [target, inc]() -> T {
+      return internal_call<S,C>(target.core(), [target, inc]() -> T {
         T* p = target.pointer();
         T r = *p;
         *p += inc;

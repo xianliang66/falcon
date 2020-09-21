@@ -8,12 +8,12 @@
  * should use extra inv workers; if main worker uses multiple tasks, then
  * writers should use normal co-routines.
  */
-//#define MULTI_TASK
-#define SINGLE_TASK
+#define MULTI_TASK
+//#define SINGLE_TASK
 
 // Cache protocol. Only one of them can be defined
 //#define GRAPPA_TARDIS_CACHE
-#define GRAPPA_WI_CACHE
+//#define GRAPPA_WI_CACHE
 
 #if (defined(GRAPPA_TARDIS_CACHE) || defined(GRAPPA_WI_CACHE))
 #define GRAPPA_CACHE_ENABLE
