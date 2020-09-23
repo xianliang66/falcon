@@ -9,7 +9,7 @@ struct SSSPData {
   VertexID parent;
 
   SSSPData() {
-    dist = std::numeric_limits<double>::max();
+    dist = std::numeric_limits<double>::max() / 2;
   }
 };
 

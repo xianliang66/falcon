@@ -6,8 +6,8 @@
 
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 22, "Log2 number of vertices.");
-DEFINE_int32(edgefactor, 34, "Average number of edges per vertex.");
+DEFINE_int32(scale, 20, "Log2 number of vertices.");
+DEFINE_int32(edgefactor, 22, "Average number of edges per vertex.");
 DEFINE_int64(root, 1, "Index of root vertex.");
 
 using namespace Grappa;
@@ -83,9 +83,6 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
               ce.complete();
             };
             spawn(func);
-            if (ce.get_count() >= 10240) {
-              ce.wait();
-            }
         }
       }
       ce.wait();

@@ -233,14 +233,27 @@ namespace Grappa {
 
     Edge get_edge(VertexID s, VertexID d) {
       CHECK(s != d);
-      auto self = this->self;
-      auto adj = self->edge_storage[self->storage_idx(s)];
-      for (auto i = adj.begin(); i != adj.end(); i++) {
-        if (i->toId == d) {
-          return *i;
+      if ((vs+s).core() == Grappa::mycore()) {
+        auto adj = edge_storage[self->storage_idx(s)];
+        for (auto i = adj.begin(); i != adj.end(); i++) {
+          if (i->toId == d) {
+            return *i;
+          }
         }
+        CHECK(0) << "Edge " << s << "==" << d << " doesn't exist.";
       }
-      CHECK(0) << "Edge " << s << "==" << d << " doesn't exist.";
+      else {
+        auto self = this->self;
+        return delegate::call((vs+s).core(), [self, s, d] {
+          auto adj = self->edge_storage[self->storage_idx(s)];
+          for (auto i = adj.begin(); i != adj.end(); i++) {
+            if (i->toId == d) {
+              return *i;
+            }
+          }
+          CHECK(0) << "Edge " << s << "==" << d << " doesn't exist.";
+        });
+      }
     }
 
     void destroy() {
