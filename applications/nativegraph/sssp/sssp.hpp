@@ -28,7 +28,7 @@ static unsigned long hash(char *s, int l)
 }
 
 struct SSSPEdgeData {
-  float weight;
+  double weight;
   // (source, dest). The value should be agreed by all cores.
   SSSPEdgeData(int i, int j) {
     int s = (i + ~12)* (i + 0x7)* (j +~12)* (j +0x7)+ ~264;

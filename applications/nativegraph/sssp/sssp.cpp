@@ -8,7 +8,7 @@
 DEFINE_bool(metrics, false, "Dump metrics");
 DEFINE_int32(scale, 18, "Log2 number of vertices.");
 DEFINE_int32(edgefactor, 17, "Average number of edges per vertex.");
-DEFINE_int64(root, 1, "Index of root vertex.");
+DEFINE_int64(root, 12, "Index of root vertex.");
 
 using namespace Grappa;
 
@@ -60,19 +60,19 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
             bool update = false;
             // Local read
             auto v = delegate::read(g->vs+id);
-            std::vector <VertexID> adjs = g->get_adj(id);
+            const std::vector <G::Edge>& adjs = g->get_adj(id);
 
             for (auto iter = adjs.begin(); iter != adjs.end(); iter++) {
 
               // Concurrent reads of neighbors.
               auto update_func = [g, id, iter, &v, &update, &ce] {
-                double neighbor_dist = delegate::read(g->vs+*iter).data.dist;
+                double neighbor_dist = delegate::read(g->vs+iter->fromId).data.dist;
 
-                G::Edge e = g->get_edge(id, *iter);
+                G::Edge e = g->get_edge(id, iter->fromId);
                 double sum = neighbor_dist + e.data.weight;
                 if (sum < v.data.dist) {
                   v.data.dist = sum;
-                  v.data.parent = *iter;
+                  v.data.parent = iter->fromId;
                   local_complete = false;
                   update = true;
                 }
@@ -112,15 +112,15 @@ int main(int argc, char* argv[]) {
 
     // generate "NE" edge tuples, sampling vertices using the
     // Graph500 Kronecker generator to get a power-law graph
-    auto tg = TupleGraph::Kronecker(FLAGS_scale, NE, 111, 222);
-    //auto tg = TupleGraph::Load("twitter_rv.net", "tsv");
+    //auto tg = TupleGraph::Kronecker(FLAGS_scale, NE, 111, 222);
+    auto tg = TupleGraph::Load("twitter_rv.net", "tsv");
 
     // create graph with incorporated Vertex
-    auto g = G::Undirected( tg );
+    auto g = G::Directed( tg );
 
     graph_create_time = (walltime()-t);
 
-    LOG(ERROR) << "graph generated (#nodes = " << g->nv << " #vertices = " <<
+    LOG(ERROR) << "graph generated (#nodes = " << g->nv << " #edges = " <<
     tg.nedge << "), " << graph_create_time;
 
     t = walltime();
@@ -150,8 +150,8 @@ int main(int argc, char* argv[]) {
     }
     sssp_mteps += sssp_nedge / this_sssp_time / 1.0e6;
 
-    tg.destroy();
     g->destroy();
+    tg.destroy();
 
   });
   Grappa::finalize();

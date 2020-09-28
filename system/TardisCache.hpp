@@ -4,7 +4,7 @@
 
 // Cache protocol. Only one of them can be defined
 //#define GRAPPA_TARDIS_CACHE
-#define GRAPPA_WI_CACHE
+//#define GRAPPA_WI_CACHE
 
 #if (defined(GRAPPA_TARDIS_CACHE) || defined(GRAPPA_WI_CACHE))
 #define GRAPPA_CACHE_ENABLE
