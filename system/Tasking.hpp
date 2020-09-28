@@ -271,9 +271,6 @@ void run(FP fp) {
 
   // spawn starting number of worker coroutines
   Grappa::impl::global_scheduler.createWorkers( FLAGS_num_starting_workers );
-#if  (defined(GRAPPA_WI_CACHE) && defined(MULTI_TASK))
-  Grappa::impl::global_scheduler.createInvWorkers( FLAGS_num_starting_workers / 8 );
-#endif
   Grappa::impl::global_scheduler.allow_active_workers(-1); // allow all workers to be active
 
   StateTimer::init();

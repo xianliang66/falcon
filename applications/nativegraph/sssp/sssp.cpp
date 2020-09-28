@@ -6,8 +6,8 @@
 
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 20, "Log2 number of vertices.");
-DEFINE_int32(edgefactor, 22, "Average number of edges per vertex.");
+DEFINE_int32(scale, 18, "Log2 number of vertices.");
+DEFINE_int32(edgefactor, 17, "Average number of edges per vertex.");
 DEFINE_int64(root, 1, "Index of root vertex.");
 
 using namespace Grappa;
@@ -25,10 +25,9 @@ void dump_sssp_graph(GlobalAddress<G> &g);
 enum thread_state { INIT = 0x0, RUNNING = 0xBA, UPDATE = 0xCA, TERMINATE = 0xFF };
 
 static bool terminated(GlobalAddress<thread_state> complete_addr) {
-  for (int i = 0; i < Grappa::cores(); i++) {
+  for (Core i = 0; i < Grappa::cores(); i++) {
     thread_state ts = delegate::read(complete_addr + i);
     if (ts == UPDATE || ts == INIT) {
-      //LOG(ERROR) << "Core " << Grappa::mycore() << " thinks Core " << i << " not completed yet.";
       return false;
     }
   }
@@ -50,24 +49,26 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
       global_alloc<thread_state>(Grappa::cores());
 
     static bool local_complete = true;
-
     // iterate over all vertices of the graph
     on_all_cores([g,complete_addr]{
-      // Remote call async
       int iter = 0;
       CompletionEvent ce;
       while (!terminated(complete_addr)) {
         local_complete = true;
         for (VertexID id = 0; id < g->nv; id++) {
           if ((g->vs+id).core() == Grappa::mycore()) {
-            ce.enroll();
-            auto func = [g, id, &ce] {
-              bool update = false;
-              auto v = delegate::read(g->vs+id);
-              std::vector <VertexID> adjs = g->get_adj(id);
-              for (auto iter = adjs.begin(); iter != adjs.end(); iter++) {
-                G::Edge e = g->get_edge(id, *iter);
+            bool update = false;
+            // Local read
+            auto v = delegate::read(g->vs+id);
+            std::vector <VertexID> adjs = g->get_adj(id);
+
+            for (auto iter = adjs.begin(); iter != adjs.end(); iter++) {
+
+              // Concurrent reads of neighbors.
+              auto update_func = [g, id, iter, &v, &update, &ce] {
                 double neighbor_dist = delegate::read(g->vs+*iter).data.dist;
+
+                G::Edge e = g->get_edge(id, *iter);
                 double sum = neighbor_dist + e.data.weight;
                 if (sum < v.data.dist) {
                   v.data.dist = sum;
@@ -75,41 +76,36 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
                   local_complete = false;
                   update = true;
                 }
-              }
-              if (update) {
-                nupdates++;
-                delegate::write(g->vs+id, v);
-              }
-              ce.complete();
-            };
-            spawn(func);
+                ce.complete();
+              };
+              ce.enroll();
+              spawn(update_func);
+            }
+            ce.wait();
+            if (update) {
+              nupdates++;
+              delegate::write(g->vs+id, v);
+            }
+          }
+        }
+        LOG(ERROR) << "Core " << Grappa::mycore() << " iteration " << ++iter
+          << " updates " << nupdates << " vertices.";
+        nupdates = 0;
+        if (local_complete) {
+          delegate::write(complete_addr + Grappa::mycore(), TERMINATE);
+        }
+        else {
+          delegate::write(complete_addr + Grappa::mycore(), UPDATE);
         }
       }
-      ce.wait();
-#ifdef GRAPPA_TARDIS_CACHE
-      Grappa::mypts() += 10;
-#endif
-      LOG(ERROR) << "Core " << Grappa::mycore() << " iteration " << ++iter
-        << " updates " << nupdates << " vertices.";
-      nupdates = 0;
-      if (local_complete) {
-        delegate::write(complete_addr + Grappa::mycore(), TERMINATE);
-      }
-      else {
-        delegate::write(complete_addr + Grappa::mycore(), UPDATE);
-      }
-    }
-  });
+    });
 }
 
 int main(int argc, char* argv[]) {
-#ifndef MULTI_TASK
-  static_assert(false, "Please define MULTI_TASK only in system/TardisCache.hpp");
-#endif
   Grappa::init(&argc, &argv);
   Grappa::run([]{
     int64_t NE = (1L << FLAGS_scale) * FLAGS_edgefactor;
-    bool verified = false;
+    bool verified = true;
     double t;
 
     t = walltime();
@@ -124,7 +120,8 @@ int main(int argc, char* argv[]) {
 
     graph_create_time = (walltime()-t);
 
-    LOG(ERROR) << "graph generated (#nodes = " << g->nv << "), " << graph_create_time;
+    LOG(ERROR) << "graph generated (#nodes = " << g->nv << " #vertices = " <<
+    tg.nedge << "), " << graph_create_time;
 
     t = walltime();
 

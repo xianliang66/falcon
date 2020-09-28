@@ -127,9 +127,6 @@ static void execute_operation(db db) {
 }
 
 int main(int argc, char * argv[]) {
-#ifndef SINGLE_TASK
-  static_assert(false, "Please define SINGLE_TASK only in system/TardisCache.hpp");
-#endif
   init( &argc, &argv );
   run([]{
     double begin_time = 0.0;
