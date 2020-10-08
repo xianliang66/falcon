@@ -24,17 +24,28 @@ void dump_sssp_graph(GlobalAddress<G> &g);
 
 enum thread_state { INIT = 0x0, RUNNING = 0xBA, UPDATE = 0xCA, TERMINATE = 0xFF };
 
+static int nupdates = 0;
+static bool emergency_stop = false;
+
 static bool terminated(GlobalAddress<thread_state> complete_addr) {
+  int nterm = 0;
   for (Core i = 0; i < Grappa::cores(); i++) {
     thread_state ts = delegate::read(complete_addr + i);
-    if (ts == UPDATE || ts == INIT) {
-      return false;
+    if (ts == TERMINATE) {
+      nterm++;
     }
   }
-  return true;
+  if (nterm >= Grappa::cores() / 2) {
+    for (Core i = 0; i < Grappa::cores(); i++) {
+      delegate::call(i, [] { emergency_stop = true; });
+    }
+    return true;
+  }
+  else {
+    return false;
+  }
 }
 
-static int nupdates = 0;
 
 void do_sssp(GlobalAddress<G> &g, int64_t root) {
     // set zero value for root distance and
@@ -53,7 +64,9 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
     on_all_cores([g,complete_addr]{
       int iter = 0;
       CompletionEvent ce;
-      while (!terminated(complete_addr)) {
+
+      do {
+        nupdates = 0;
         local_complete = true;
         for (VertexID id = 0; id < g->nv; id++) {
           if ((g->vs+id).core() == Grappa::mycore()) {
@@ -64,11 +77,15 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
 
             for (auto iter = adjs.begin(); iter != adjs.end(); iter++) {
 
+              if (emergency_stop) {
+                break;
+              }
+
               // Concurrent reads of neighbors.
               auto update_func = [g, id, iter, &v, &update, &ce] {
                 double neighbor_dist = delegate::read(g->vs+iter->fromId).data.dist;
 
-                G::Edge e = g->get_edge(id, iter->fromId);
+                G::Edge e = g->get_edge(iter->fromId, id);
                 double sum = neighbor_dist + e.data.weight;
                 if (sum < v.data.dist) {
                   v.data.dist = sum;
@@ -90,14 +107,13 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
         }
         LOG(ERROR) << "Core " << Grappa::mycore() << " iteration " << ++iter
           << " updates " << nupdates << " vertices.";
-        nupdates = 0;
         if (local_complete) {
           delegate::write(complete_addr + Grappa::mycore(), TERMINATE);
         }
         else {
           delegate::write(complete_addr + Grappa::mycore(), UPDATE);
         }
-      }
+      } while (!emergency_stop && !terminated(complete_addr));
     });
 }
 
@@ -106,6 +122,7 @@ int main(int argc, char* argv[]) {
   Grappa::run([]{
     int64_t NE = (1L << FLAGS_scale) * FLAGS_edgefactor;
     bool verified = true;
+    bool directed = false;
     double t;
 
     t = walltime();
@@ -116,7 +133,13 @@ int main(int argc, char* argv[]) {
     auto tg = TupleGraph::Load("twitter_rv.net", "tsv");
 
     // create graph with incorporated Vertex
-    auto g = G::Directed( tg );
+    GlobalAddress<G> g;
+    if (directed) {
+      g = G::Directed( tg );
+    }
+    else {
+      g = G::Undirected( tg );
+    }
 
     graph_create_time = (walltime()-t);
 
@@ -134,7 +157,7 @@ int main(int argc, char* argv[]) {
     double this_sssp_time = walltime() - t;
     LOG(ERROR) << "(root=" << root << ", time=" << this_sssp_time << ") proto:"
       << GRAPPA_CC_PROTOCOL_NAME << " #Cache:" <<
-      MAX_CACHE_NUMBER * 1.0 / (1L << FLAGS_scale) * 100 << "%";
+      MAX_CACHE_NUMBER * 1.0 / g->nv * 100 << "%";
     sssp_time += this_sssp_time;
 
     if (FLAGS_metrics) Metrics::merge_and_print();
@@ -143,7 +166,7 @@ int main(int argc, char* argv[]) {
     if (!verified) {
       // only verify the first one to save time
       t = walltime();
-      sssp_nedge = Verificator<G>::verify(tg, g, root);
+      sssp_nedge = Verificator<G>::verify(tg, g, root, directed);
       verify_time = (walltime()-t);
       LOG(ERROR) << verify_time;
       verified = true;

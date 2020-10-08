@@ -180,10 +180,12 @@ namespace Grappa {
 
     struct Edge {
       EdgeState data;
+      // The edge is owned by toId.
       VertexID fromId;
 
       Edge() {}
-      Edge(int s, int d): data(EdgeState(s, d)), fromId(d) {}
+      // An edge from s->d.
+      Edge(int s, int d): data(EdgeState(s, d)), fromId(s) {}
       /// Access elements of EdgeState with operator '->'
       EdgeState* operator->() { return &data; }
       const EdgeState* operator->() const { return &data; }
@@ -226,29 +228,19 @@ namespace Grappa {
       return edge_storage[storage_idx(id)];
     }
 
+    // s==>d
     Edge get_edge(VertexID s, VertexID d) {
       CHECK(s != d);
-      if ((vs+s).core() == Grappa::mycore()) {
-        auto adj = edge_storage[self->storage_idx(s)];
+      auto self = this->self;
+      return delegate::call((vs+d).core(), [self, s, d] {
+        auto adj = self->edge_storage[self->storage_idx(d)];
         for (auto i = adj.begin(); i != adj.end(); i++) {
-          if (i->fromId == d) {
+          if (i->fromId == s) {
             return *i;
           }
         }
         CHECK(0) << "Edge " << s << "==" << d << " doesn't exist.";
-      }
-      else {
-        auto self = this->self;
-        return delegate::call((vs+s).core(), [self, s, d] {
-          auto adj = self->edge_storage[self->storage_idx(s)];
-          for (auto i = adj.begin(); i != adj.end(); i++) {
-            if (i->fromId == d) {
-              return *i;
-            }
-          }
-          CHECK(0) << "Edge " << s << "==" << d << " doesn't exist.";
-        });
-      }
+      });
     }
 
     void destroy() {
@@ -333,15 +325,17 @@ namespace Grappa {
           if (s == d) {
             continue;
           }
-          auto func1 = [g, d, s] {
+          // s==>d
+          auto func1 = [g, s, d] {
             CHECK_LT(s, g->nv); CHECK_LT(d, g->nv);
             auto& v = g->edge_storage[g->storage_idx(d)];
-            v.push_back(Edge(d, s));
+            v.push_back(Edge(s, d));
           };
-          auto func2 = [g, s, d] {
+          // d==>s
+          auto func2 = [g, d, s] {
             CHECK_LT(s, g->nv); CHECK_LT(d, g->nv);
             auto& v = g->edge_storage[g->storage_idx(s)];
-            v.push_back(Edge(s, d));
+            v.push_back(Edge(d, s));
           };
           delegate::call<SyncMode::Async>((g->vs + d).core(), func1);
           if (!directed) {

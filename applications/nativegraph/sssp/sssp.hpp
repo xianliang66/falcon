@@ -52,7 +52,7 @@ public:
     return g->get_edge(i, j).data.weight;
   }
 
-  static inline int64_t verify(TupleGraph tg, GlobalAddress<G> g, int64_t root) {
+  static inline int64_t verify(TupleGraph tg, GlobalAddress<G> g, int64_t root, bool directed) {
     //VerificatorBase<G>::verify(tg,g,root);
 
     // SSSP distances verification
@@ -66,21 +66,28 @@ public:
       /* SSSP specific checks */
       auto ti = VerificatorBase<G>::get_parent(g,i), tj = VerificatorBase<G>::get_parent(g,j);
       auto di = get_dist(g,i), dj = get_dist(g,j);
-      auto wij = get_edge_weight(g,i,j), wji = get_edge_weight(g,j,i);
+      double wij = get_edge_weight(g,i,j), wji;
+      if (!directed) {
+        wji = get_edge_weight(g,j,i);
+      }
       CHECK(!((di < dj) && ((di + wij) < dj))) << "Error, distance of the nearest neighbor is too great :"
         << "(" << i << "," << di << ")" << "--" << wij << "-->" <<
         "(" << j << "," << dj << ") by Core " << Grappa::mycore();
-      CHECK(!((dj < di) && ((dj + wji) < di))) << "Error, distance of the nearest neighbor is too great : "
-        << "(" << j << "," << dj << ")" << "--" << wji << "-->" <<
-        "(" << i << "," << di << ") by Core " << Grappa::mycore();
+      if (!directed) {
+        CHECK(!((dj < di) && ((dj + wji) < di))) << "Error, distance of the nearest neighbor is too great : "
+          << "(" << j << "," << dj << ")" << "--" << wji << "-->" <<
+          "(" << i << "," << di << ") by Core " << Grappa::mycore();
+      }
       CHECK(!((i == tj) && ((di + wij) != dj))) << "Error, distance of the child vertex is not equil to "
         << "sum of its parent distance and edge weight :"
         << "(" << i << "," << di << ")" << "--" << wij << "-->" <<
         "(" << j << "," << dj << ") by Core " << Grappa::mycore();
-      CHECK(!((j == ti) && ((dj + wji) != di))) << "Error, distance of the child vertex is not equil to "
-        << "sum of its parent distance and edge weight :"
-        << "(" << j << "," << dj << ")" << "--" << wji << "-->" <<
-        "(" << i << "," << di << ") by Core " << Grappa::mycore();
+      if (!directed) {
+        CHECK(!((j == ti) && ((dj + wji) != di))) << "Error, distance of the child vertex is not equil to "
+          << "sum of its parent distance and edge weight :"
+          << "(" << j << "," << dj << ")" << "--" << wji << "-->" <<
+          "(" << i << "," << di << ") by Core " << Grappa::mycore();
+      }
     });
 
     // everything checked out!

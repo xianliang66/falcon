@@ -4,7 +4,7 @@
 
 #define CONSTANT_DISTRIBUTION
 //#define ZIPF_DISTRIBUTION
-#define ZIPF_ALPHA 0
+#define ZIPF_ALPHA 0.98
 // YCSB template parameters
 #define recordcount 10000
 #define operationcount 5000000
