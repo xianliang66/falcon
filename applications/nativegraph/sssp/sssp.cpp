@@ -121,7 +121,7 @@ int main(int argc, char* argv[]) {
   Grappa::init(&argc, &argv);
   Grappa::run([]{
     int64_t NE = (1L << FLAGS_scale) * FLAGS_edgefactor;
-    bool verified = true;
+    bool verified = false;
     bool directed = false;
     double t;
 

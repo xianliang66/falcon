@@ -239,7 +239,7 @@ namespace Grappa {
             return *i;
           }
         }
-        CHECK(0) << "Edge " << s << "==" << d << " doesn't exist.";
+        CHECK(0) << "Edge " << s << "==>" << d << " doesn't exist.";
       });
     }
 
@@ -315,6 +315,7 @@ namespace Grappa {
 
     // Set topology of graph
     on_all_cores([g, tg, directed] {
+      CompletionEvent ce;
       for (size_t i = 0; i < tg.nedge; i++) {
         if ((tg.edges + i).core() == Grappa::mycore()) {
           auto e = delegate::read<SyncMode::Blocking,CacheMode::WriteThrough>
@@ -337,12 +338,21 @@ namespace Grappa {
             auto& v = g->edge_storage[g->storage_idx(s)];
             v.push_back(Edge(d, s));
           };
-          delegate::call<SyncMode::Async>((g->vs + d).core(), func1);
+          ce.enroll();
+          spawn([g, d, func1, &ce] {
+            delegate::call((g->vs + d).core(), func1);
+            ce.complete();
+          });
           if (!directed) {
-            delegate::call<SyncMode::Async>((g->vs + s).core(), func2);
+            ce.enroll();
+            spawn([g, s, func2, &ce] {
+              delegate::call((g->vs + s).core(), func2);
+              ce.complete();
+            });
           }
         }
       }
+      ce.wait();
     });
 
     VLOG(1) << "-- vertices: " << g->nv;
