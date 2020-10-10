@@ -179,9 +179,19 @@ TupleGraph TupleGraph::load_tsv( std::string path ) {
 
       size_t start_lineno = Grappa::mycore() * edges_each_core;
       size_t end_lineno = std::min<size_t>(start_lineno + edges_each_core, nedge);
+      size_t current_lineno = 0;
       
       // start reading at start offset
       std::ifstream infile( filename, std::ios_base::in );
+
+      // locate at the start_lineno
+      while (current_lineno < start_lineno) {
+        std::string str;
+        std::getline( infile, str );
+        if (str[0] != '#') {
+          current_lineno++;
+        }
+      }
 
       // read up to one entry past the end_offset
       while( infile.good() && start_lineno < end_lineno ) {

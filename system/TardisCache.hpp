@@ -8,7 +8,7 @@
 
 #if (defined(GRAPPA_TARDIS_CACHE) || defined(GRAPPA_WI_CACHE))
 #define GRAPPA_CACHE_ENABLE
-#define MAX_NODE_NUM 256
+#define MAX_NODE_NUM 160 
 #endif
 
 #if (defined(GRAPPA_TARDIS_CACHE))
@@ -36,7 +36,7 @@
 #ifdef GRAPPA_CACHE_ENABLE
 
 #define LEASE 10
-#define MAX_CACHE_NUMBER 10240
+#define MAX_CACHE_NUMBER 38486 
 
 typedef uint32_t timestamp_t;
 

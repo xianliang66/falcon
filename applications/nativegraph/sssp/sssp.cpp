@@ -6,7 +6,7 @@
 
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 18, "Log2 number of vertices.");
+DEFINE_int32(scale, 20, "Log2 number of vertices.");
 DEFINE_int32(edgefactor, 17, "Average number of edges per vertex.");
 DEFINE_int64(root, 12, "Index of root vertex.");
 
@@ -24,7 +24,6 @@ void dump_sssp_graph(GlobalAddress<G> &g);
 
 enum thread_state { INIT = 0x0, RUNNING = 0xBA, UPDATE = 0xCA, TERMINATE = 0xFF };
 
-static int nupdates = 0;
 static bool emergency_stop = false;
 
 static bool terminated(GlobalAddress<thread_state> complete_addr) {
@@ -63,6 +62,7 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
     // iterate over all vertices of the graph
     on_all_cores([g,complete_addr]{
       int iter = 0;
+      int nupdates = 0;
       CompletionEvent ce;
 
       do {
@@ -98,6 +98,7 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
               ce.enroll();
               spawn(update_func);
             }
+
             ce.wait();
             if (update) {
               nupdates++;
@@ -121,8 +122,8 @@ int main(int argc, char* argv[]) {
   Grappa::init(&argc, &argv);
   Grappa::run([]{
     int64_t NE = (1L << FLAGS_scale) * FLAGS_edgefactor;
-    bool verified = false;
-    bool directed = false;
+    bool verified = true;
+    bool directed = true;
     double t;
 
     t = walltime();

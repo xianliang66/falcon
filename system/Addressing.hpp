@@ -136,14 +136,15 @@ public:
       global_communicator.tardis_cache;
     std::list<uintptr_t>& lru = global_communicator.lru;
 
+    CHECK(tardis_cache.size() == lru.size());
+
     auto it = tardis_cache.find(g.raw_bits());
     void *freed_space = nullptr;
     if (it == tardis_cache.end()) {
       if (valid != nullptr) { *valid = false; }
       // Return a stub
       if (!insert_new) { return tardis_cache.begin()->second; }
-      // TODO: Batched eviction
-      if (lru.size() >= MAX_CACHE_NUMBER) {
+      while (lru.size() >= MAX_CACHE_NUMBER) {
         auto victim = lru.rbegin();
         while (victim != lru.rend() &&
           tardis_cache[*victim].usedcnt > 0)
@@ -151,6 +152,9 @@ public:
         if (victim != lru.rend()) {
           auto v = tardis_cache.find(*victim);
           if (v->second.size == sizeof(T)) {
+            if (freed_space != nullptr) {
+              free(freed_space);
+            }
             freed_space = v->second.object;
           }
           else {
