@@ -3,8 +3,8 @@
 #include <list>
 
 // Cache protocol. Only one of them can be defined
-//#define GRAPPA_TARDIS_CACHE
-#define GRAPPA_WI_CACHE
+#define GRAPPA_TARDIS_CACHE
+//#define GRAPPA_WI_CACHE
 
 #if (defined(GRAPPA_TARDIS_CACHE) || defined(GRAPPA_WI_CACHE))
 #define GRAPPA_CACHE_ENABLE
@@ -67,6 +67,7 @@ struct cache_info_base {
 
 template <typename T>
 struct lock_obj { T object; bool locked; };
+
 #ifdef GRAPPA_TARDIS_CACHE
 struct owner_cache_info {
   owner_cache_info() : rts(0), wts(0) {}
@@ -87,6 +88,14 @@ struct rpc_read_result {
   timestamp_t rts, wts;
   T r;
 };
+template< typename T >
+struct rpc_read_result2 {
+  rpc_read_result2(T _new, T _old, const owner_cache_info& c) :
+    new_r(_new), old_r(_old), rts(c.rts), wts(c.wts) {}
+  rpc_read_result2() {}
+  timestamp_t rts, wts;
+  T new_r, old_r;
+};
 #endif // GRAPPA_TARDIS_CACHE
 
 #if (defined(GRAPPA_WI_CACHE))
@@ -103,6 +112,13 @@ struct cache_info : cache_info_base {
   cache_info(void *obj, size_t sz) : cache_info_base(obj, sz), valid(false) {}
 };
 
+template< typename T >
+struct rpc_read_result2 {
+  rpc_read_result2(T _new, T _old) :
+    new_r(_new), old_r(_old) {}
+  rpc_read_result2() {}
+  T new_r, old_r;
+};
 #endif // GRAPPA_WI_CACHE
 
 }

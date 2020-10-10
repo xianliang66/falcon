@@ -98,6 +98,7 @@ namespace Grappa {
 
       T* operator->() { return &data; }
       const T* operator->() const { return &data; }
+      T& operator+= (int inc) { data += inc; }
 
       static constexpr size_t global_heap_size() { return sizeof(Vertex); }
       static constexpr size_t locale_heap_size() { return 0; }

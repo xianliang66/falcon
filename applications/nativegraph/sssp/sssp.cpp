@@ -6,7 +6,7 @@
 
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 20, "Log2 number of vertices.");
+DEFINE_int32(scale, 18, "Log2 number of vertices.");
 DEFINE_int32(edgefactor, 17, "Average number of edges per vertex.");
 DEFINE_int64(root, 12, "Index of root vertex.");
 
@@ -45,7 +45,6 @@ static bool terminated(GlobalAddress<thread_state> complete_addr) {
   }
 }
 
-
 void do_sssp(GlobalAddress<G> &g, int64_t root) {
     // set zero value for root distance and
     // setup 'root' as the parent of itself
@@ -58,7 +57,6 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
     GlobalAddress<thread_state> complete_addr =
       global_alloc<thread_state>(Grappa::cores());
 
-    static bool local_complete = true;
     // iterate over all vertices of the graph
     on_all_cores([g,complete_addr]{
       int iter = 0;
@@ -67,19 +65,20 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
 
       do {
         nupdates = 0;
-        local_complete = true;
         for (VertexID id = 0; id < g->nv; id++) {
           if ((g->vs+id).core() == Grappa::mycore()) {
             bool update = false;
             // Local read
             auto v = delegate::read(g->vs+id);
+
+            if (!v.data.active) {
+              continue;
+            }
+
             const std::vector <G::Edge>& adjs = g->get_adj(id);
 
-            for (auto iter = adjs.begin(); iter != adjs.end(); iter++) {
-
-              if (emergency_stop) {
-                break;
-              }
+            for (auto iter = adjs.begin(); !emergency_stop &&
+                iter != adjs.end(); iter++) {
 
               // Concurrent reads of neighbors.
               auto update_func = [g, id, iter, &v, &update, &ce] {
@@ -90,7 +89,6 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
                 if (sum < v.data.dist) {
                   v.data.dist = sum;
                   v.data.parent = iter->fromId;
-                  local_complete = false;
                   update = true;
                 }
                 ce.complete();
@@ -100,15 +98,34 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
             }
 
             ce.wait();
+
             if (update) {
               nupdates++;
-              delegate::write(g->vs+id, v);
+              v.data.active++;
+              // Activate all neighbours
+              for (auto iter = adjs.begin(); !emergency_stop &&
+                iter != adjs.end(); iter++) {
+
+                auto activate_func = [g, iter, &ce] {
+                  auto n = delegate::fetch_and_add(g->vs+iter->fromId, 1);
+                  ce.complete();
+                };
+                ce.enroll();
+                //spawn(activate_func);
+                activate_func();
+              }
+              ce.wait();
             }
+            else {
+              v.data.active--;
+            }
+            delegate::write(g->vs+id, v);
           }
         }
-        LOG(ERROR) << "Core " << Grappa::mycore() << " iteration " << ++iter
-          << " updates " << nupdates << " vertices.";
-        if (local_complete) {
+        if (nupdates > 0)
+          LOG(ERROR) << "Core " << Grappa::mycore() << " iteration " << ++iter
+            << " updates " << nupdates << " vertices.";
+        if (nupdates == 0) {
           delegate::write(complete_addr + Grappa::mycore(), TERMINATE);
         }
         else {

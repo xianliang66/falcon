@@ -649,16 +649,174 @@ retry:
     /// original value to blocking thread.
     /// @warning Target object must lie on a single node (not span blocks in global address space).
     template< SyncMode S = SyncMode::Blocking,
+              CacheMode M = CacheMode::WriteBack,
               GlobalCompletionEvent * C = &impl::local_gce,
               typename T = decltype(nullptr),
               typename U = decltype(nullptr) >
     T fetch_and_add(GlobalAddress<T> target, U inc) {
-      return internal_call<S,C>(target.core(), [target, inc]() -> T {
-        T* p = target.pointer();
-        T r = *p;
-        *p += inc;
-        return r;
+      delegate_writes++;
+      auto start_time = Grappa::timestamp();
+#ifdef GRAPPA_CACHE_ENABLE
+      if (M == CacheMode::WriteThrough) {
+        return internal_call<S,C>(target.core(), [target, inc]() -> T {
+          auto old = *target.pointer();
+          *target.pointer() += inc;
+          return old;
+        });
+      }
+#endif // GRAPPA_CACHE_ENABLE
+
+#ifdef GRAPPA_TARDIS_CACHE
+      timestamp_t pts = Grappa::mypts();
+      if (target.is_owner()) {
+        auto& owner_ts = GlobalAddress<T>::find_owner_info(target);
+        timestamp_t ts = std::max<timestamp_t>(Grappa::mypts(), owner_ts.rts + 1);
+        Grappa::mypts() = owner_ts.rts = owner_ts.wts = ts;
+        /// Update owner storage.
+        auto old = *target.pointer();
+        *target.pointer() += inc;
+        /*LOG(INFO) << "Core " << Grappa::mycore() << "(O) ptr " << target.raw_bits()
+          << " #" << delegate_writes << " write wts "
+          << owner_ts.wts << " rts " << owner_ts.rts << " pts " << Grappa::mypts();*/
+
+        delegate_write_latency += (Grappa::timestamp() - start_time);
+        return old;
+      }
+
+      impl::cache_info& mycache = GlobalAddress<T>::find_cache(target);
+      verify_cache(mycache);
+      GlobalAddress<T>::active_cache(mycache);
+      auto r = internal_call<S,C>(target.core(), [target, inc] {
+        auto& owner_ts = GlobalAddress<T>::find_owner_info(target);
+        timestamp_t ts = std::max<timestamp_t>(Grappa::mypts(), owner_ts.rts + 1);
+        Grappa::mypts() = owner_ts.wts = owner_ts.rts = ts;
+        auto old = *target.pointer();
+        *target.pointer() += inc;
+
+        return impl::rpc_read_result2<T>(*target.pointer(), old, owner_ts);
       });
+      Grappa::mypts() = mycache.rts = mycache.wts =
+        std::max<timestamp_t>(Grappa::mypts(), r.wts);
+      mycache.assign(&r.new_r);
+      /*LOG(INFO) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
+        << " #" << delegate_writes << " write wts "
+        << mycache.wts << " rts " << mycache.rts << " pts " << Grappa::mypts();*/
+      GlobalAddress<T>::deactive_cache(mycache);
+
+      delegate_write_latency += (Grappa::timestamp() - start_time);
+
+      return r.old_r;
+#elif defined(GRAPPA_WI_CACHE)
+      if (target.is_owner()) {
+        auto& info = GlobalAddress<T>::find_owner_info(target);
+
+        while (info.locked) {
+          Grappa::yield();
+        }
+        /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
+          << " write as owner.";*/
+        info.locked = true;
+
+        // Broadcast invalidation messages according to the copyset concurrently.
+        CompletionEvent ce;
+        for (int i = 0; i < info.copyset.size(); i++) {
+          if (info.copyset[i] && Grappa::mycore() != i) {
+            ce.enroll();
+            spawn([i, target, &ce] {
+              delegate::internal_call<S,C>((Core)i, [target] {
+                bool valid;
+                auto& mycache = GlobalAddress<T>::find_cache(target, &valid, false);
+                if (valid) {
+                  mycache.valid = false;
+                }
+              });
+              ce.complete();
+            });
+          }
+        }
+        ce.wait();
+        info.copyset.reset();
+
+        info.locked = false;
+        auto old = *target.pointer();
+        *target.pointer() += inc;
+        delegate_write_latency += (Grappa::timestamp() - start_time);
+        return old;
+      }
+
+      impl::cache_info& mycache = GlobalAddress<T>::find_cache(target, nullptr, true);
+      verify_cache(mycache);
+      GlobalAddress<T>::active_cache(mycache);
+
+      /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
+        << " write as non-owner.";*/
+      // Embedded delegataions are disallowed in Grappa.
+      // Lock this object.
+retry:
+      auto r1 = internal_call<S,C>(target.core(), [target] {
+        auto& info = GlobalAddress<T>::find_owner_info(target);
+        if (!info.locked) {
+          info.locked = true;
+          return lock_obj<decltype(info.copyset)> { info.copyset, false };
+        }
+        else {
+          return lock_obj<decltype(info.copyset)> { info.copyset, true };
+        }
+      });
+      if (r1.locked) {
+        goto retry;
+      }
+      auto& cpyset = r1.object;
+
+      CompletionEvent ce;
+      // Broadcast invalidation messages according to the copyset concurrently.
+      for (int i = 0; i < cpyset.size(); i++) {
+        if (cpyset[i] && i != Grappa::mycore()) {
+          ce.enroll();
+          spawn([i, target, &ce] {
+            delegate::internal_call<S,C>((Core)i, [target] {
+              bool valid;
+              auto& mycache = GlobalAddress<T>::find_cache(target, &valid, false);
+              if (valid) {
+                mycache.valid = false;
+              }
+            });
+            ce.complete();
+          });
+          /*LOG(ERROR) << "Core " << Grappa::mycore() << " ptr " << target.raw_bits()
+            << " sends INV as non-owner to Core " << i << " with result " << r;*/
+        }
+      }
+      ce.wait();
+
+      Core writer = Grappa::mycore();
+      // Unlock this object and update the copyset.
+      auto r2 = internal_call<S,C>(target.core(), [target, inc, writer] {
+        auto& info = GlobalAddress<T>::find_owner_info(target);
+        info.copyset.reset();
+        info.copyset[writer] = true;
+        CHECK(info.locked);
+        info.locked = false;
+        auto old = *target.pointer();
+        *target.pointer() += inc;
+
+        return impl::rpc_read_result2<T>(*target.pointer(), old);
+      });
+      mycache.valid = true;
+      mycache.assign(&r2.new_r);
+      GlobalAddress<T>::deactive_cache(mycache);
+      delegate_write_latency += (Grappa::timestamp() - start_time);
+
+      return r2.old_r;
+#else // Vanilla Grappa
+      auto r = internal_call<S,C>(target.core(), [target, inc]() -> T {
+        auto old = *target.pointer();
+        *target.pointer() += inc;
+        return old;
+      });
+      delegate_write_latency += (Grappa::timestamp() - start_time);
+      return r;
+#endif
     }
 
     /// Flat combines fetch_and_add to a single global address
