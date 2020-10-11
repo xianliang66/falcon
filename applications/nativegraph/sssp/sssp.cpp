@@ -6,7 +6,7 @@
 
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 18, "Log2 number of vertices.");
+DEFINE_int32(scale, 17, "Log2 number of vertices.");
 DEFINE_int32(edgefactor, 17, "Average number of edges per vertex.");
 DEFINE_int64(root, 12, "Index of root vertex.");
 
@@ -34,7 +34,7 @@ static bool terminated(GlobalAddress<thread_state> complete_addr) {
       nterm++;
     }
   }
-  if (nterm >= Grappa::cores() / 2) {
+  if (emergency_stop || nterm >= Grappa::cores() / 2) {
     for (Core i = 0; i < Grappa::cores(); i++) {
       delegate::call(i, [] { emergency_stop = true; });
     }
@@ -45,13 +45,47 @@ static bool terminated(GlobalAddress<thread_state> complete_addr) {
   }
 }
 
+static void activate(const GlobalAddress<G> &g, VertexID id) {
+  CHECK((g->vs+id).is_owner());
+
+  auto v = delegate::read<SyncMode::Blocking,CacheMode::WriteThrough>
+    (g->vs+id);
+  v.data += 1;
+  delegate::write<SyncMode::Blocking,CacheMode::WriteThrough>
+    (g->vs+id, v);
+}
+
+static void deactivate(const GlobalAddress<G> &g, VertexID id) {
+  CHECK((g->vs+id).is_owner());
+
+  auto v = delegate::read<SyncMode::Blocking,CacheMode::WriteThrough>
+    (g->vs+id);
+  v.data += -1;
+  delegate::write<SyncMode::Blocking,CacheMode::WriteThrough>
+    (g->vs+id, v);
+}
+
 void do_sssp(GlobalAddress<G> &g, int64_t root) {
     // set zero value for root distance and
     // setup 'root' as the parent of itself
     auto v = delegate::read(g->vs+root);
     v.data.dist = 0.0;
     v.data.parent = root;
+    v.data += 1;
     delegate::write(g->vs+root, v);
+
+    on_all_cores([g,root]{
+      if ((g->vs+root).is_owner()) {
+        const std::vector <VertexID>& adjs = g->get_out_vertices(root);
+
+        for (auto iter = adjs.begin(); iter != adjs.end(); iter++) {
+          VertexID vout = *iter;
+          delegate::call((g->vs+vout).core(), [g, vout] {
+              activate(g, vout);
+          });
+        }
+      }
+    });
 
     // expose global completion flag to global address space
     GlobalAddress<thread_state> complete_addr =
@@ -72,6 +106,7 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
             auto v = delegate::read(g->vs+id);
 
             if (!v.data.active) {
+              Grappa::yield();
               continue;
             }
 
@@ -101,25 +136,26 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
 
             if (update) {
               nupdates++;
-              v.data.active++;
-              // Activate all neighbours
-              for (auto iter = adjs.begin(); !emergency_stop &&
-                iter != adjs.end(); iter++) {
+              v.data.active = delegate::read(g->vs+id).data.active + 1;
+              delegate::write(g->vs+id, v);
+              // Activate all out-edges' neighbours
+              const std::vector<VertexID>& out = g->get_out_vertices(id);
 
-                auto activate_func = [g, iter, &ce] {
-                  auto n = delegate::fetch_and_add(g->vs+iter->fromId, 1);
-                  ce.complete();
-                };
-                ce.enroll();
-                //spawn(activate_func);
-                activate_func();
+              for (auto iter = out.begin(); !emergency_stop &&
+                iter != out.end(); iter++) {
+
+                VertexID vout = *iter;
+
+                spawn([g,vout] {
+                  delegate::call((g->vs+vout).core(), [g,vout] {
+                      activate(g, vout);
+                  });
+                });
               }
-              ce.wait();
             }
             else {
-              v.data.active--;
+              deactivate(g, id);
             }
-            delegate::write(g->vs+id, v);
           }
         }
         if (nupdates > 0)

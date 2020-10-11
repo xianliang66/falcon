@@ -347,9 +347,14 @@ namespace Grappa {
       auto start_time = Grappa::timestamp();
 
       if (M == CacheMode::WriteThrough) {
-        return internal_call<S,C>(target.core(), [target]() -> T {
+        if (target.is_owner()) {
           return *target.pointer();
-        });
+        }
+        else {
+          return internal_call<S,C>(target.core(), [target]() -> T {
+            return *target.pointer();
+          });
+        }
       }
 
 #ifdef GRAPPA_TARDIS_CACHE
@@ -497,13 +502,18 @@ retry:
       static_assert(std::is_convertible<T,U>(), "type of value must match GlobalAddress type");
       delegate_writes++;
       auto start_time = Grappa::timestamp();
-#ifdef GRAPPA_CACHE_ENABLE
+
       if (M == CacheMode::WriteThrough) {
-        internal_call<S,C>(target.core(), [target, value]() -> T {
+        if (target.is_owner()) {
           *target.pointer() = value;
-        });
+          return;
+        }
+        else {
+          return internal_call<S,C>(target.core(), [target, value]() {
+            *target.pointer() = value;
+          });
+        }
       }
-#endif // GRAPPA_CACHE_ENABLE
 
 #ifdef GRAPPA_TARDIS_CACHE
       timestamp_t pts = Grappa::mypts();

@@ -199,8 +199,10 @@ namespace Grappa {
     int64_t nv;
 
     std::vector <int> owned;
-    // Adjacent list
+    // Adjacent list of in-edges in case of a directed graph.
     std::vector <std::vector<Edge>> edge_storage;
+    // All out edges in case of a directed graph.
+    std::vector <std::vector<VertexID>> out_vertices;
 
     GlobalAddress<Graph> self;
 
@@ -227,6 +229,10 @@ namespace Grappa {
 
     const std::vector<Edge>& get_adj(VertexID id) {
       return edge_storage[storage_idx(id)];
+    }
+
+    const std::vector<VertexID>& get_out_vertices(VertexID id) {
+      return out_vertices[storage_idx(id)];
     }
 
     // s==>d
@@ -310,6 +316,7 @@ namespace Grappa {
         if ((g->vs+i).core() == Grappa::mycore()) {
           g->owned[i] = (int)g->edge_storage.size();
           g->edge_storage.push_back(std::vector <Edge> ());
+          g->out_vertices.push_back(std::vector <VertexID> ());
         }
       }
     });
@@ -323,31 +330,50 @@ namespace Grappa {
             (tg.edges + i);
           VertexID s = e.v0;
           VertexID d = e.v1;
+          CHECK_LT(s, g->nv); CHECK_LT(d, g->nv);
           // No self loops
           if (s == d) {
             continue;
           }
           // s==>d
-          auto func1 = [g, s, d] {
-            CHECK_LT(s, g->nv); CHECK_LT(d, g->nv);
-            auto& v = g->edge_storage[g->storage_idx(d)];
-            v.push_back(Edge(s, d));
+          auto funcsd_edge = [g, s, d] {
+            auto& e = g->edge_storage[g->storage_idx(d)];
+            e.push_back(Edge(s, d));
+          };
+          // s==>d
+          auto funcsd_vertex = [g, s, d] {
+            auto& v = g->out_vertices[g->storage_idx(s)];
+            v.push_back(d);
           };
           // d==>s
-          auto func2 = [g, d, s] {
-            CHECK_LT(s, g->nv); CHECK_LT(d, g->nv);
-            auto& v = g->edge_storage[g->storage_idx(s)];
-            v.push_back(Edge(d, s));
+          auto funcds_edge = [g, d, s] {
+            auto& e = g->edge_storage[g->storage_idx(s)];
+            e.push_back(Edge(d, s));
+          };
+          // d==>s
+          auto funcds_vertex = [g, d, s] {
+            auto& v = g->out_vertices[g->storage_idx(d)];
+            v.push_back(s);
           };
           ce.enroll();
-          spawn([g, d, func1, &ce] {
-            delegate::call((g->vs + d).core(), func1);
+          spawn([g, d, funcsd_edge, &ce] {
+            delegate::call((g->vs + d).core(), funcsd_edge);
+            ce.complete();
+          });
+          ce.enroll();
+          spawn([g, s, funcsd_vertex, &ce] {
+            delegate::call((g->vs + s).core(), funcsd_vertex);
             ce.complete();
           });
           if (!directed) {
             ce.enroll();
-            spawn([g, s, func2, &ce] {
-              delegate::call((g->vs + s).core(), func2);
+            spawn([g, s, funcds_edge, &ce] {
+              delegate::call((g->vs + s).core(), funcds_edge);
+              ce.complete();
+            });
+            ce.enroll();
+            spawn([g, d, funcds_vertex, &ce] {
+              delegate::call((g->vs + d).core(), funcds_vertex);
               ce.complete();
             });
           }
