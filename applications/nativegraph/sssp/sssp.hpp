@@ -8,16 +8,9 @@ struct SSSPData {
   static constexpr double default_dist = std::numeric_limits<double>::max() / 2;
   double dist;
   VertexID parent;
-  int64_t active = 0;
 
   SSSPData() {
     dist = default_dist;
-  }
-
-  // Activate or deactive this vertex.
-  SSSPData& operator+= (int inc) {
-    active = active + inc >= 0 ? std::min<int64_t>(12, active + inc) : 0;
-    return *this;
   }
 } __attribute__((__aligned__(2 * sizeof(uint64_t))));
 

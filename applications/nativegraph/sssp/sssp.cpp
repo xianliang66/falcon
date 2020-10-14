@@ -1,12 +1,13 @@
 #include <Grappa.hpp>
 #include <GlobalVector.hpp>
 #include <graph/Graph.hpp>
+#include <unordered_set>
 
 #include "sssp.hpp"
 
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 17, "Log2 number of vertices.");
+DEFINE_int32(scale, 23, "Log2 number of vertices.");
 DEFINE_int32(edgefactor, 17, "Average number of edges per vertex.");
 DEFINE_int64(root, 12, "Index of root vertex.");
 
@@ -45,25 +46,8 @@ static bool terminated(GlobalAddress<thread_state> complete_addr) {
   }
 }
 
-static void activate(const GlobalAddress<G> &g, VertexID id) {
-  CHECK((g->vs+id).is_owner());
-
-  auto v = delegate::read<SyncMode::Blocking,CacheMode::WriteThrough>
-    (g->vs+id);
-  v.data += 1;
-  delegate::write<SyncMode::Blocking,CacheMode::WriteThrough>
-    (g->vs+id, v);
-}
-
-static void deactivate(const GlobalAddress<G> &g, VertexID id) {
-  CHECK((g->vs+id).is_owner());
-
-  auto v = delegate::read<SyncMode::Blocking,CacheMode::WriteThrough>
-    (g->vs+id);
-  v.data += -1;
-  delegate::write<SyncMode::Blocking,CacheMode::WriteThrough>
-    (g->vs+id, v);
-}
+static std::unordered_set<VertexID> current_active;
+static std::unordered_set<VertexID> next_active;
 
 void do_sssp(GlobalAddress<G> &g, int64_t root) {
     // set zero value for root distance and
@@ -71,7 +55,6 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
     auto v = delegate::read(g->vs+root);
     v.data.dist = 0.0;
     v.data.parent = root;
-    v.data += 1;
     delegate::write(g->vs+root, v);
 
     on_all_cores([g,root]{
@@ -80,8 +63,8 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
 
         for (auto iter = adjs.begin(); iter != adjs.end(); iter++) {
           VertexID vout = *iter;
-          delegate::call((g->vs+vout).core(), [g, vout] {
-              activate(g, vout);
+          delegate::call((g->vs+vout).core(), [vout] {
+              next_active.insert(vout);
           });
         }
       }
@@ -95,72 +78,83 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
     on_all_cores([g,complete_addr]{
       int iter = 0;
       int nupdates = 0;
-      CompletionEvent ce;
+      CompletionEvent ce, update_trigger;
 
       do {
+        current_active = next_active;
+        next_active.clear();
         nupdates = 0;
-        for (VertexID id = 0; id < g->nv; id++) {
-          if ((g->vs+id).core() == Grappa::mycore()) {
-            bool update = false;
-            // Local read
-            auto v = delegate::read(g->vs+id);
+        double start_time = Grappa::walltime();
+        for (auto iter = current_active.begin(); iter != current_active.end(); iter++) {
+          VertexID id = *iter;
+          CHECK((g->vs+id).is_owner());
+          bool update = false;
+          update_trigger.enroll();
 
-            if (!v.data.active) {
-              Grappa::yield();
-              continue;
-            }
+          // Local read
+          auto v = delegate::read(g->vs+id);
 
-            const std::vector <G::Edge>& adjs = g->get_adj(id);
+          const std::vector <G::Edge>& adjs = g->get_adj(id);
+          int nadj = adjs.size(), ncomp = 0;
 
-            for (auto iter = adjs.begin(); !emergency_stop &&
-                iter != adjs.end(); iter++) {
+          for (auto iter = adjs.begin(); !emergency_stop &&
+              iter != adjs.end(); iter++) {
 
-              // Concurrent reads of neighbors.
-              auto update_func = [g, id, iter, &v, &update, &ce] {
-                double neighbor_dist = delegate::read(g->vs+iter->fromId).data.dist;
+            // Concurrent reads of neighbors.
+            auto update_func = [g, id, iter, nadj, &ncomp, &v, &update, &ce,
+                 &update_trigger] {
+              double neighbor_dist =
+                delegate::read(g->vs+iter->fromId).data.dist;
 
-                G::Edge e = g->get_edge(iter->fromId, id);
-                double sum = neighbor_dist + e.data.weight;
-                if (sum < v.data.dist) {
-                  v.data.dist = sum;
-                  v.data.parent = iter->fromId;
-                  update = true;
+              G::Edge e = g->get_edge(iter->fromId, id);
+              double sum = neighbor_dist + e.data.weight;
+              if (sum < v.data.dist) {
+                v.data.dist = sum;
+                v.data.parent = iter->fromId;
+                if (!update) {
+                  update_trigger.complete();
                 }
-                ce.complete();
-              };
-              ce.enroll();
-              spawn(update_func);
-            }
-
-            ce.wait();
-
-            if (update) {
-              nupdates++;
-              v.data.active = delegate::read(g->vs+id).data.active + 1;
-              delegate::write(g->vs+id, v);
-              // Activate all out-edges' neighbours
-              const std::vector<VertexID>& out = g->get_out_vertices(id);
-
-              for (auto iter = out.begin(); !emergency_stop &&
-                iter != out.end(); iter++) {
-
-                VertexID vout = *iter;
-
-                spawn([g,vout] {
-                  delegate::call((g->vs+vout).core(), [g,vout] {
-                      activate(g, vout);
-                  });
-                });
+                update = true;
               }
+
+              ncomp++;
+              if (!update && ncomp == nadj) {
+                update_trigger.complete();
+              }
+              ce.complete();
+            };
+            ce.enroll();
+            spawn(update_func);
+          }
+
+          update_trigger.wait();
+          if (update) {
+            // Activate all out-edges' neighbours
+            const std::vector<VertexID>& out = g->get_out_vertices(id);
+
+            for (auto iter = out.begin(); !emergency_stop &&
+              iter != out.end(); iter++) {
+
+              VertexID vout = *iter;
+
+              spawn([g, vout] {
+                delegate::call((g->vs+vout).core(), [vout] {
+                    next_active.insert(vout);
+                });
+              });
             }
-            else {
-              deactivate(g, id);
-            }
+          }
+          ce.wait();
+
+          if (update) {
+            nupdates++;
+            delegate::write(g->vs+id, v);
           }
         }
         if (nupdates > 0)
           LOG(ERROR) << "Core " << Grappa::mycore() << " iteration " << ++iter
-            << " updates " << nupdates << " vertices.";
+            << " updates " << nupdates << " vertices (" << current_active.size()
+            << ") in " << walltime() - start_time << "s.";
         if (nupdates == 0) {
           delegate::write(complete_addr + Grappa::mycore(), TERMINATE);
         }
