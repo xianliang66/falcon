@@ -48,6 +48,14 @@ static bool terminated(GlobalAddress<thread_state> complete_addr) {
 static std::unordered_map<VertexID, std::vector<VertexID>> current_active;
 static std::unordered_map<VertexID, std::vector<VertexID>> next_active;
 
+static void dump_active(const std::unordered_map<VertexID, std::vector<VertexID>>& active) {
+  for (auto i = active.begin(); i != active.end(); i++) {
+    for (auto j = i->second.begin(); j != i->second.end(); j++) {
+      LOG(ERROR) << "Core " << Grappa::mycore() << " " << *j << "==>" << i->first;
+    }
+  }
+}
+
 void do_sssp(GlobalAddress<G> &g, int64_t root) {
     // set zero value for root distance and
     // setup 'root' as the parent of itself
@@ -63,6 +71,9 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
         for (auto iter = adjs.begin(); iter != adjs.end(); iter++) {
           VertexID vout = *iter;
           delegate::call((g->vs+vout).core(), [vout, root] {
+              if (next_active.find(vout) == next_active.end()) {
+                next_active[vout] = std::vector<VertexID>();
+              }
               next_active[vout].push_back(root);
           });
         }
@@ -86,43 +97,32 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
         double start_time = Grappa::walltime();
         for (auto iter = current_active.begin(); iter != current_active.end(); iter++) {
           VertexID id = iter->first;
-          auto active_adj = iter->second;
+          auto active_adjs = iter->second;
           CHECK((g->vs+id).is_owner());
           bool update = false;
 
           // Local read
           auto v = delegate::read(g->vs+id);
 
-          const std::vector <G::Edge>& adjs = g->get_adj(id);
+          for (auto adj_iter = active_adjs.begin(); !emergency_stop &&
+              adj_iter != active_adjs.end(); adj_iter++) {
 
-          for (auto iter = adjs.begin(); !emergency_stop &&
-              iter != adjs.end(); iter++) {
+            ce.enroll();
+            spawn([g, adj_iter, id, &v, &update, &ce] {
+              double neighbor_dist = delegate::read(g->vs+*adj_iter).data.dist;
 
-            if (std::find(active_adj.begin(), active_adj.end(), iter->fromId)
-                == active_adj.end()) {
-              continue;
-            }
-
-            // Concurrent reads of neighbors.
-            auto update_func = [g, id, iter, &v, &update, &ce] {
-              double neighbor_dist =
-                delegate::read(g->vs+iter->fromId).data.dist;
-
-              G::Edge e = g->get_edge(iter->fromId, id);
+              G::Edge e = g->get_edge(*adj_iter, id);
               double sum = neighbor_dist + e.data.weight;
               if (sum < v.data.dist) {
                 v.data.dist = sum;
-                v.data.parent = iter->fromId;
+                v.data.parent = *adj_iter;
                 update = true;
               }
-
               ce.complete();
-            };
-            ce.enroll();
-            spawn(update_func);
+            });
           }
-
           ce.wait();
+
 
           if (update) {
             nupdates++;
@@ -137,6 +137,9 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
 
               spawn([g, vout, id, &ce] {
                 delegate::call((g->vs+vout).core(), [vout, id] {
+                    if (next_active.find(vout) == next_active.end()) {
+                      next_active[vout] = std::vector<VertexID>();
+                    }
                     next_active[vout].push_back(id);
                 });
               });
@@ -147,6 +150,7 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
           LOG(ERROR) << "Core " << Grappa::mycore() << " iteration " << ++iter
             << " updates " << nupdates << " vertices (" << current_active.size()
             << ") in " << walltime() - start_time << "s.";
+        Grappa::yield();
         if (nupdates == 0) {
           delegate::write(complete_addr + Grappa::mycore(), TERMINATE);
         }
