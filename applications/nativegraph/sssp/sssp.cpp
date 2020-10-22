@@ -45,8 +45,9 @@ static bool terminated(GlobalAddress<thread_state> complete_addr) {
   }
 }
 
-static std::unordered_map<VertexID, std::vector<VertexID>> current_active;
-static std::unordered_map<VertexID, std::vector<VertexID>> next_active;
+// Active vertex
+static std::queue<VertexID> active_queue;
+static std::unordered_map<VertexID, std::vector<VertexID>> active_edges;
 
 static void dump_active(const std::unordered_map<VertexID, std::vector<VertexID>>& active) {
   for (auto i = active.begin(); i != active.end(); i++) {
@@ -70,11 +71,11 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
 
         for (auto iter = adjs.begin(); iter != adjs.end(); iter++) {
           VertexID vout = *iter;
-          delegate::call((g->vs+vout).core(), [vout, root] {
-              if (next_active.find(vout) == next_active.end()) {
-                next_active[vout] = std::vector<VertexID>();
+          delegate::call((g->vs+vout).core(), [vout,root] {
+              if (active_edges[vout].size() == 0) {
+                active_queue.push(vout);
               }
-              next_active[vout].push_back(root);
+              active_edges[vout].push_back(root);
           });
         }
       }
@@ -91,21 +92,20 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
       CompletionEvent ce;
 
       do {
-        current_active = next_active;
-        next_active.clear();
-        nupdates = 0;
         double start_time = Grappa::walltime();
-        for (auto iter = current_active.begin(); iter != current_active.end(); iter++) {
-          VertexID id = iter->first;
-          auto active_adjs = iter->second;
+        while (active_queue.size() > 0) {
+          VertexID id = active_queue.front();
+          active_queue.pop();
           CHECK((g->vs+id).is_owner());
           bool update = false;
 
+          auto adjs = active_edges[id];
+          active_edges[id].clear();
           // Local read
           auto v = delegate::read(g->vs+id);
 
-          for (auto adj_iter = active_adjs.begin(); !emergency_stop &&
-              adj_iter != active_adjs.end(); adj_iter++) {
+          for (auto adj_iter = adjs.begin(); !emergency_stop &&
+              adj_iter != adjs.end(); adj_iter++) {
 
             ce.enroll();
             spawn([g, adj_iter, id, &v, &update, &ce] {
@@ -123,7 +123,6 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
           }
           ce.wait();
 
-
           if (update) {
             nupdates++;
             delegate::write(g->vs+id, v);
@@ -137,27 +136,19 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
 
               spawn([g, vout, id, &ce] {
                 delegate::call((g->vs+vout).core(), [vout, id] {
-                    if (next_active.find(vout) == next_active.end()) {
-                      next_active[vout] = std::vector<VertexID>();
+                    if (active_edges[vout].size() == 0) {
+                      active_queue.push(vout);
                     }
-                    next_active[vout].push_back(id);
+                    active_edges[vout].push_back(id);
                 });
               });
             }
           }
         }
-        if (nupdates > 0)
-          LOG(ERROR) << "Core " << Grappa::mycore() << " iteration " << ++iter
-            << " updates " << nupdates << " vertices (" << current_active.size()
-            << ") in " << walltime() - start_time << "s.";
-        Grappa::yield();
-        if (nupdates == 0) {
-          delegate::write(complete_addr + Grappa::mycore(), TERMINATE);
-        }
-        else {
-          delegate::write(complete_addr + Grappa::mycore(), UPDATE);
-        }
+        delegate::write(complete_addr + Grappa::mycore(), TERMINATE);
       } while (!emergency_stop && !terminated(complete_addr));
+
+      LOG(ERROR) << "Core " << Grappa::mycore() << " updates " << nupdates << " vertices.";
     });
 }
 
@@ -174,7 +165,7 @@ int main(int argc, char* argv[]) {
     // generate "NE" edge tuples, sampling vertices using the
     // Graph500 Kronecker generator to get a power-law graph
     //auto tg = TupleGraph::Kronecker(FLAGS_scale, NE, 111, 222);
-    auto tg = TupleGraph::Load("twitter_rv.net", "tsv");
+    auto tg = TupleGraph::Load("twitter_bintsv4.net", "bintsv4");
 
     // create graph with incorporated Vertex
     GlobalAddress<G> g;
