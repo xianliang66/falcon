@@ -54,6 +54,7 @@
 /// incrementing by blocks work.
 
 #include "Communicator.hpp"
+#include "TardisCache.hpp"
 
 typedef int Pool;
 
@@ -94,6 +95,16 @@ static const intptr_t core_mask = (1L << core_bits) - 1;
 static const intptr_t pool_mask = (1L << pool_bits) - 1;
 static const intptr_t pointer_mask = (1L << pointer_bits) - 1;
 
+/// C++ template is hard to use!!!
+class GlobalCacheData {
+public:
+  static std::unordered_map<uintptr_t, tardis_o_t>& tardis_owner_cache;
+  static std::unordered_map<uintptr_t, wi_o_t>& wi_owner_cache;
+  static std::unordered_map<uintptr_t, tardis_c_t> tardis_cache;
+  static std::unordered_map<uintptr_t, wi_c_t> wi_cache;
+  static std::list<uintptr_t>& lru;
+};
+
 /// @addtogroup Memory
 /// @{
 
@@ -108,6 +119,196 @@ static const intptr_t pointer_mask = (1L << pointer_bits) - 1;
 /// Linear addresses are block cyclic across all the cores in the system.
 template< typename T >
 class GlobalAddress {
+public:
+  static tardis_o_t& find_tardis_owner_info( const GlobalAddress<T>& g ) {
+    CHECK(FLAGS_cache_proto == GRAPPA_TARDIS);
+    auto& owner_cache = GlobalCacheData::tardis_owner_cache;
+    auto iter = owner_cache.find(g.raw_bits());
+    // Initial cold miss.
+    if (iter == owner_cache.end()) {
+      owner_cache[g.raw_bits()] = T();
+      return owner_cache[g.raw_bits()];
+    }
+    return iter->second;
+  }
+
+  static wi_o_t& find_wi_owner_info( const GlobalAddress<T>& g ) {
+    CHECK(FLAGS_cache_proto == GRAPPA_WI);
+    auto& owner_cache = GlobalCacheData::wi_owner_cache;
+    auto iter = owner_cache.find(g.raw_bits());
+    // Initial cold miss.
+    if (iter == owner_cache.end()) {
+      owner_cache[g.raw_bits()] = T();
+      return owner_cache[g.raw_bits()];
+    }
+    return iter->second;
+  }
+
+  static tardis_c_t& find_tardis_cache( const GlobalAddress<T>& g,
+      bool* valid = nullptr, bool insert_new = true) {
+    CHECK(FLAGS_cache_proto == GRAPPA_TARDIS);
+    auto& cache = GlobalCacheData::tardis_cache;
+    std::list<uintptr_t>& lru = GlobalCacheData::lru;
+
+    CHECK(cache.size() == lru.size());
+
+    auto it = cache.find(g.raw_bits());
+    void *freed_space = nullptr;
+    if (it == cache.end()) {
+      if (valid != nullptr) { *valid = false; }
+      // Return a stub
+      if (!insert_new) { return cache.begin()->second; }
+      while (lru.size() >= MAX_CACHE_NUMBER) {
+        auto victim = lru.rbegin();
+        while (victim != lru.rend() &&
+          cache[*victim].usedcnt > 0)
+          victim++;
+        if (victim != lru.rend()) {
+          auto v = cache.find(*victim);
+          if (v->second.size == sizeof(T)) {
+            if (freed_space != nullptr) {
+              free(freed_space);
+            }
+            freed_space = v->second.object;
+          }
+          else {
+            free(v->second.object);
+          }
+          lru.erase(v->second.lru_iter);
+          cache.erase(v);
+        }
+      }
+
+      if (freed_space == nullptr) {
+        freed_space = malloc(sizeof(T));
+        CHECK(freed_space != nullptr);
+      }
+      lru.push_front(g.raw_bits());
+      auto& r = cache[g.raw_bits()] = tardis_c_t(freed_space, sizeof(T));
+      r.lru_iter = lru.begin();
+      r.usedcnt++;
+
+      return r;
+    }
+    if (valid != nullptr) { *valid = true; }
+    lru.erase(it->second.lru_iter);
+    lru.push_front(g.raw_bits());
+    it->second.lru_iter = lru.begin();
+    // Inv request don't need to increase usedcnt.
+    if (insert_new) {
+      it->second.usedcnt++;
+    }
+    return it->second;
+  }
+
+  static wi_c_t& find_wi_cache( const GlobalAddress<T>& g,
+      bool* valid = nullptr, bool insert_new = true) {
+    CHECK(FLAGS_cache_proto == GRAPPA_WI);
+    auto& cache = GlobalCacheData::wi_cache;
+    std::list<uintptr_t>& lru = GlobalCacheData::lru;
+
+    CHECK(cache.size() == lru.size());
+
+    auto it = cache.find(g.raw_bits());
+    void *freed_space = nullptr;
+    if (it == cache.end()) {
+      if (valid != nullptr) { *valid = false; }
+      // Return a stub
+      if (!insert_new) { return cache.begin()->second; }
+      while (lru.size() >= MAX_CACHE_NUMBER) {
+        auto victim = lru.rbegin();
+        while (victim != lru.rend() &&
+          cache[*victim].usedcnt > 0)
+          victim++;
+        if (victim != lru.rend()) {
+          auto v = cache.find(*victim);
+          if (v->second.size == sizeof(T)) {
+            if (freed_space != nullptr) {
+              free(freed_space);
+            }
+            freed_space = v->second.object;
+          }
+          else {
+            free(v->second.object);
+          }
+          lru.erase(v->second.lru_iter);
+          cache.erase(v);
+        }
+      }
+
+      if (freed_space == nullptr) {
+        freed_space = malloc(sizeof(T));
+        CHECK(freed_space != nullptr);
+      }
+      lru.push_front(g.raw_bits());
+      auto& r = cache[g.raw_bits()] = wi_c_t(freed_space, sizeof(T));
+      r.lru_iter = lru.begin();
+      r.usedcnt++;
+
+      return r;
+    }
+    if (valid != nullptr) { *valid = true; }
+    lru.erase(it->second.lru_iter);
+    lru.push_front(g.raw_bits());
+    it->second.lru_iter = lru.begin();
+    // Inv request don't need to increase usedcnt.
+    if (insert_new) {
+      it->second.usedcnt++;
+    }
+    return it->second;
+  }
+
+  static std::list<uintptr_t>::iterator get_lru_iter(void) {
+    return GlobalCacheData::lru.begin();
+  }
+
+  // WARNING: return value might not be typename T.
+  // Remember to deactive each object.
+  static std::vector<GlobalAddress<T>> get_expired(timestamp_t pts) {
+    auto& lru = GlobalCacheData::lru;
+    std::vector<GlobalAddress<T>> result;
+
+    int max_update = 0;
+    for (auto iter = lru.begin(); iter != lru.end() &&
+      max_update < lru.size() / 2; iter++, max_update++) {
+      result.push_back(GlobalAddress<T>::Raw(*iter));
+    }
+
+    return result;
+  }
+
+  /*
+   * refcnt is co-routine's lock. Make sure there is only one task accesses one
+   * object at a time.
+   */
+  static void active_cache( Grappa::impl::cache_info_base& mycache ) {
+    mycache.refcnt++;
+  }
+
+  // After this, the reference might become invalid.
+  static void deactive_cache( Grappa::impl::cache_info_base& mycache ) {
+    mycache.refcnt--;
+    mycache.usedcnt--;
+  }
+
+  static void free_cache(void) {
+    if (FLAGS_cache_proto == GRAPPA_TARDIS) {
+      auto& cache = GlobalCacheData::tardis_cache;
+
+      for (auto it = cache.begin(); it != cache.end(); it++) {
+        free(it->second.object);
+        it->second.object = nullptr;
+      }
+    }
+    else if (FLAGS_cache_proto == GRAPPA_WI) {
+      auto& cache = GlobalCacheData::wi_cache;
+
+      for (auto it = cache.begin(); it != cache.end(); it++) {
+        free(it->second.object);
+        it->second.object = nullptr;
+      }
+    }
+  }
 private:
 
   /// Storage for address

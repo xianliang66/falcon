@@ -143,6 +143,7 @@ set(SYSTEM_SOURCES
   tasks/Task.cpp
   tasks/TaskingScheduler.cpp
   stack.S
+  TardisCache.cpp
 )
 
 ################
@@ -186,7 +187,7 @@ install(FILES grappa_gdb.macros DESTINATION "share/Grappa")
 add_grappa_application(ContextSwitchRate_bench.exe "ContextSwitchRate_bench.cpp")
 
 # create a test, which will be run with the given number of nodes (nnode),
-# and processors per node (ppn), and added to the aggregate targets for 
+# and processors per node (ppn), and added to the aggregate targets for
 # passing or failing tests
 macro(add_check test_cpp nnode ppn target)
   get_filename_component(test_name ${test_cpp} NAME_WE) # name without extension
@@ -270,13 +271,13 @@ endmacro(add_commtest_exe)
 
 macro(add_commtest_test name nnode ppn)
   get_filename_component(base ${name} NAME_WE) # name without extension
-  
+
   add_commtest_exe(${name} ${name} ${ARGN})
   set_property(TARGET ${name} PROPERTY FOLDER "Tests") # For organization in Xcode project
   set_target_properties(${test} PROPERTIES
     COMPILE_FLAGS "-DBOOST_TEST_DYN_LINK -DBOOST_TEST_MODULE=${base} -DCOMMUNICATOR_TEST"
   )
-  
+
   # TODO: use "ctest" to make whole regression test suite
   add_custom_target("check-${base}"
     COMMAND ${CMAKE_BINARY_DIR}/bin/grappa_srun --test=${base} --nnode=${nnode} --ppn=${ppn}
@@ -285,7 +286,7 @@ macro(add_commtest_test name nnode ppn)
   add_test(NAME "test-${base}" WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND ${CMAKE_BINARY_DIR}/bin/grappa_srun --test=${base} --nnode=${nnode} --ppn=${ppn}
   )
-  
+
   set_property(TARGET "check-${base}" PROPERTY FOLDER "Tests")
   list(APPEND GRAPPA_TESTS "check-${base}")
 endmacro(add_commtest_test)
@@ -308,7 +309,7 @@ find_package(Doxygen)
 if(DOXYGEN_FOUND)
   get_property(include_dirs DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
   string(REPLACE ";" " " CMAKE_CURRENT_INCLUDES "${include_dirs}")
-  
+
   set(DOXYGEN_OUTPUT "doxygen")
   set(DOXYGEN_BUILD_DIR ${CMAKE_SOURCE_DIR}/build)
   configure_file(${CMAKE_CURRENT_SOURCE_DIR}/Doxyfile.in ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile @ONLY)

@@ -94,6 +94,9 @@ namespace Grappa {
     
   /// Specify whether an operation blocks until complete, or returns "immediately".
   enum class SyncMode { Blocking /*default*/, Async };
+
+  /// Specify whether an operation goes through the cache.
+  enum class CacheMode { WriteBack /*default*/, WriteThrough };
     
   
 /// "Universal" wallclock time (works at least for Mac, and most Linux)

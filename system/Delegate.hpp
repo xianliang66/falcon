@@ -41,9 +41,16 @@
 #include "DelegateBase.hpp"
 #include "GlobalCompletionEvent.hpp"
 #include "AsyncDelegate.hpp"
+#include "Communicator.hpp"
+#include "TardisCache.hpp"
 #include <type_traits>
 
 GRAPPA_DECLARE_METRIC(SummarizingMetric<uint64_t>, flat_combiner_fetch_and_add_amount);
+GRAPPA_DECLARE_METRIC(SummarizingMetric<double>, delegate_read_latency);
+GRAPPA_DECLARE_METRIC(SummarizingMetric<double>, delegate_write_latency);
+GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_cache_hit);
+GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_cache_miss);
+GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_cache_expired);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_reads);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_read_targets);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_writes);
@@ -52,7 +59,6 @@ GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_cmpswaps);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_cmpswap_targets);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_fetchadds);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_fetchadd_targets);
-
 
 namespace Grappa {
     /// @addtogroup Delegates
@@ -108,7 +114,6 @@ namespace Grappa {
   } // namespace impl
   
   namespace delegate {
-    
 #define AUTO_INVOKE(expr) decltype(expr) { return expr; }
         
     template< SyncMode S = SyncMode::Blocking, 
@@ -130,6 +135,75 @@ namespace Grappa {
   }
 
   namespace delegate {
+    static void verify_cache(const impl::cache_info_base& mycache) {
+      while (mycache.refcnt > 0)
+        // Grappa::yield cannot be called in Addressing.hpp
+        Grappa::yield();
+    }
+    enum CacheState { Owner, Hit, Expired, Miss };
+
+    template <typename T>
+    static void bg_renewal(void) {
+#ifdef TARDIS_BG_RENEWAL
+      delegate_bg_renewal++;
+
+      auto info = GlobalAddress<T>::get_expired(Grappa::mypts());
+
+      for (auto iter = info.rbegin(); iter != info.rend(); iter++) {
+        bool valid;
+        GlobalAddress<T> target = *iter;
+        auto& target_cache = GlobalAddress<T>::find_tardis_cache(target, &valid, false);
+        // Cache doesn't exist.
+        if (!valid ||
+            // Cache info is used by others.
+            target_cache.usedcnt > 0 ||
+            // The object is not expired.
+            target_cache.rts >= Grappa::mypts() ||
+            // T is not the correct parameter template of this object.
+            target_cache.size != sizeof(T)) {
+          continue;
+        }
+        target_cache.usedcnt++;
+        GlobalAddress<T>::active_cache(target_cache);
+
+        timestamp_t wts = target_cache.wts;
+        timestamp_t pts = Grappa::mypts();
+
+        auto r = internal_call(target.core(), [target, pts, wts] {
+          auto& owner_ts = GlobalAddress<T>::find_tardis_owner_info(target);
+          owner_ts.rts = std::max<timestamp_t>(std::max<timestamp_t>(
+                owner_ts.rts, owner_ts.wts + LEASE), (pts + LEASE));
+          return impl::rpc_read_result<T>(*target.pointer(), owner_ts);
+        });
+
+        if (target_cache.wts == r.wts) {
+          delegate_bg_fast_path++;
+          target_cache.rts = r.rts;
+        }
+        else {
+          delegate_bg_update++;
+          target_cache.assign(&r.r);
+          target_cache.rts = r.rts;
+          target_cache.wts = r.wts;
+        }
+        GlobalAddress<T>::deactive_cache(target_cache);
+    }
+#endif /* TARDIS_BG_RENEWAL */
+  }
+
+    static CacheState try_read_cache(const tardis_c_t& mycache,
+        bool valid) {
+      if (!valid) {
+        delegate_cache_miss++;
+        return CacheState::Miss;
+      }
+      if (Grappa::mypts() > mycache.rts) {
+        delegate_cache_expired++;
+        return CacheState::Expired;
+      }
+      delegate_cache_hit++;
+      return CacheState::Hit;
+    }
 
     /// Helper that makes it easier to implement custom delegate operations 
     /// specifically on global addresses.
@@ -237,44 +311,318 @@ namespace Grappa {
         return r;
       }
     }
-    
+
+    template< SyncMode S = SyncMode::Blocking, 
+              CacheMode M = CacheMode::WriteBack,
+              GlobalCompletionEvent * C = &impl::local_gce,
+              typename T = decltype(nullptr) >
+    static T __vanilla_read(GlobalAddress<T> target) {
+      auto r = call<S,C>(target.core(), [target]() -> T {
+        return *target.pointer();
+      });
+      return r;
+    }
+
+    template< SyncMode S = SyncMode::Blocking, 
+              CacheMode M = CacheMode::WriteBack,
+              GlobalCompletionEvent * C = &impl::local_gce,
+              typename T = decltype(nullptr) >
+    static T __tardis_read(GlobalAddress<T> target) {
+      if (target.is_owner()) {
+        auto& owner_ts = GlobalAddress<T>::find_tardis_owner_info(target);
+
+        if (owner_ts.rts < Grappa::mypts()) {
+          owner_ts.rts = Grappa::mypts();
+        }
+        return *target.pointer();
+      }
+
+      bool valid;
+      auto& mycache = GlobalAddress<T>::find_tardis_cache(target, &valid);
+      verify_cache(mycache);
+      GlobalAddress<T>::active_cache(mycache);
+      if (try_read_cache(mycache, valid) == CacheState::Hit) {
+        GlobalAddress<T>::deactive_cache(mycache);
+        return *(T*)mycache.get_object();
+      }
+
+      timestamp_t pts = Grappa::mypts();
+      timestamp_t wts = mycache.wts;
+
+      // Expired: try to renew first
+#ifdef TARDIS_TWO_STAGE_RENEWAL
+      if (valid) {
+        auto r = call<S,C>(target.core(), [target, pts, wts]() {
+          auto& owner_ts = GlobalAddress<T>::find_tardis_owner_info(target);
+          if (owner_ts.wts == wts) {
+            owner_ts.rts = std::max<timestamp_t>(std::max<timestamp_t>(
+                  owner_ts.rts, owner_ts.wts + FLAGS_lease), (pts + FLAGS_lease));
+            return owner_ts.rts;
+          }
+          else {
+            return (timestamp_t)~0L;
+          }
+        });
+        if (r != (timestamp_t)~0L) {
+          mycache.rts = r;
+          GlobalAddress<T>::deactive_cache(mycache);
+          return *(T*)mycache.get_object();
+        }
+      }
+#endif
+
+      // Ask for the latest object.
+      auto r = call<S,C>(target.core(), [target, pts]() {
+        auto& owner_ts = GlobalAddress<T>::find_tardis_owner_info(target);
+        owner_ts.rts = std::max<timestamp_t>(std::max<timestamp_t>(
+              owner_ts.rts, owner_ts.wts + FLAGS_lease), (pts + FLAGS_lease));
+        return impl::rpc_read_result<T>(*target.pointer(), owner_ts);
+      });
+      mycache.assign(&r.r);
+      mycache.rts = r.rts;
+      mycache.wts = r.wts;
+      Grappa::mypts() = std::max<timestamp_t>(pts, r.wts);
+      // Other co-routines can access this cache now.
+      GlobalAddress<T>::deactive_cache(mycache);
+      return r.r;
+    }
+
+    template< SyncMode S = SyncMode::Blocking, 
+              CacheMode M = CacheMode::WriteBack,
+              GlobalCompletionEvent * C = &impl::local_gce,
+              typename T = decltype(nullptr) >
+    static T __wi_read(GlobalAddress<T> target) {
+      if (target.is_owner()) {
+        auto& owner_ts = GlobalAddress<T>::find_wi_owner_info(target);
+        while (owner_ts.locked) {
+          Grappa::yield();
+        }
+        return *target.pointer();
+      }
+
+      bool valid;
+      auto& mycache = GlobalAddress<T>::find_wi_cache(target, &valid, true);
+      verify_cache(mycache);
+      GlobalAddress<T>::active_cache(mycache);
+
+      if (valid && mycache.valid) {
+        delegate_cache_hit++;
+        GlobalAddress<T>::deactive_cache(mycache);
+        return *(T*)mycache.get_object();
+      }
+      delegate_cache_miss++;
+
+      Core my = Grappa::mycore();
+
+      // The object has been locked on the owner.
+retry:
+      auto r = call<S,C>(target.core(), [my, target]() {
+        auto& info = GlobalAddress<T>::find_wi_owner_info(target);
+        if (!info.locked) {
+          info.copyset[my] = true;
+        }
+        return lock_obj<T>{ *target.pointer(), info.locked };
+      });
+      if (r.locked) {
+        goto retry;
+      }
+
+      mycache.valid = true;
+      mycache.assign(&r.object);
+      GlobalAddress<T>::deactive_cache(mycache);
+      return r.object;
+    }
+
     /// Read the value (potentially remote) at the given GlobalAddress, blocks the calling task until
     /// round-trip communication is complete.
     /// @warning Target object must lie on a single node (not span blocks in global address space).
     template< SyncMode S = SyncMode::Blocking, 
+              CacheMode M = CacheMode::WriteBack,
               GlobalCompletionEvent * C = &impl::local_gce,
               typename T = decltype(nullptr) >
     T read(GlobalAddress<T> target) {
       delegate_reads++;
-      return call<S,C>(target.core(), [target]() -> T {
-        delegate_read_targets++;
-        return *target.pointer();
-      });
+      double start_time = Grappa::timestamp();
+      if (M == CacheMode::WriteThrough) {
+        return __vanilla_read<S,M,C>(target);
+      }
+
+      T r;
+      switch (FLAGS_cache_proto) {
+        case GRAPPA_VANILLA:
+          r = __vanilla_read<S,M,C>(target); break;
+        case GRAPPA_TARDIS:
+          r = __tardis_read<S,M,C>(target); break;
+        case GRAPPA_WI:
+          r = __wi_read<S,M,C>(target); break;
+        default:
+          CHECK(0) << "No such protocol " << FLAGS_cache_proto;
+      }
+      delegate_read_latency += (Grappa::timestamp() - start_time);
+      return r;
     }
     
     
     /// Remove 'const' qualifier to do read.
     template< SyncMode S = SyncMode::Blocking, 
+              CacheMode M = CacheMode::WriteBack,
               GlobalCompletionEvent * C = &impl::local_gce,
               typename T = decltype(nullptr) >
     T read(GlobalAddress<const T> target) {
-      return read<S,C>(static_cast<GlobalAddress<T>>(target));
+      return read<S,C,M>(static_cast<GlobalAddress<T>>(target));
+    }
+
+    template< SyncMode S = SyncMode::Blocking, 
+              GlobalCompletionEvent * C = &impl::local_gce,
+              typename T = decltype(nullptr),
+              typename U = decltype(nullptr) >
+    static void __vanilla_write(GlobalAddress<T> target, U value) {
+      return call<S,C>(target.core(), [target, value]() {
+        *target.pointer() = value;
+      });
+    }
+
+    template< SyncMode S = SyncMode::Blocking, 
+              GlobalCompletionEvent * C = &impl::local_gce,
+              typename T = decltype(nullptr),
+              typename U = decltype(nullptr) >
+    static void __tardis_write(GlobalAddress<T> target, U value) {
+      timestamp_t pts = Grappa::mypts();
+      if (target.is_owner()) {
+        auto& owner_ts = GlobalAddress<T>::find_tardis_owner_info(target);
+        timestamp_t ts = std::max<timestamp_t>(Grappa::mypts(), owner_ts.rts + 1);
+        Grappa::mypts() = owner_ts.rts = owner_ts.wts = ts;
+        /// Update owner storage.
+        *target.pointer() = value;
+        return;
+      }
+
+      auto& mycache = GlobalAddress<T>::find_tardis_cache(target);
+      verify_cache(mycache);
+      GlobalAddress<T>::active_cache(mycache);
+      // No need to broadcast.
+      auto r = call<S,C>(target.core(), [target, value] {
+        auto& owner_ts = GlobalAddress<T>::find_tardis_owner_info(target);
+        timestamp_t ts = std::max<timestamp_t>(Grappa::mypts(), owner_ts.rts + 1);
+        Grappa::mypts() = owner_ts.wts = owner_ts.rts = ts;
+        *target.pointer() = value;
+        return ts;
+      });
+      Grappa::mypts() = mycache.rts = mycache.wts =
+        std::max<timestamp_t>(Grappa::mypts(), r);
+      mycache.assign(&value);
+      GlobalAddress<T>::deactive_cache(mycache);
+    }
+
+    template< SyncMode S = SyncMode::Blocking, 
+              GlobalCompletionEvent * C = &impl::local_gce,
+              typename T = decltype(nullptr),
+              typename U = decltype(nullptr) >
+    static void __wi_write(GlobalAddress<T> target, U value) {
+      if (target.is_owner()) {
+        auto& info = GlobalAddress<T>::find_wi_owner_info(target);
+
+        while (info.locked) {
+          Grappa::yield();
+        }
+        info.locked = true;
+
+        // Broadcast invalidation messages according to the copyset one-by-one.
+        for (int i = 0; i < info.copyset.size(); i++) {
+          if (info.copyset[i] && Grappa::mycore() != i) {
+            call<S,C>((Core)i, [target] {
+              bool valid;
+              auto& mycache = GlobalAddress<T>::find_wi_cache(target, &valid, false);
+              if (valid) {
+                mycache.valid = false;
+              }
+            });
+          }
+        }
+        info.copyset.reset();
+
+        info.locked = false;
+        *target.pointer() = value;
+        return;
+      }
+
+      auto& mycache = GlobalAddress<T>::find_wi_cache(target, nullptr, true);
+      verify_cache(mycache);
+      GlobalAddress<T>::active_cache(mycache);
+
+      // Embedded delegataions are disallowed in Grappa.
+      // Lock this object.
+retry:
+      auto r = call<S,C>(target.core(), [target] {
+        auto& info = GlobalAddress<T>::find_wi_owner_info(target);
+        if (!info.locked) {
+          info.locked = true;
+          return lock_obj<decltype(info.copyset)> { info.copyset, false };
+        }
+        else {
+          return lock_obj<decltype(info.copyset)> { info.copyset, true };
+        }
+      });
+      if (r.locked) {
+        goto retry;
+      }
+      auto& cpyset = r.object;
+
+      // Broadcast invalidation messages according to the copyset one-by-one.
+      for (int i = 0; i < cpyset.size(); i++) {
+        if (cpyset[i] && i != Grappa::mycore()) {
+          call<S,C>((Core)i, [target] {
+            bool valid;
+            auto& mycache = GlobalAddress<T>::find_wi_cache(target, &valid, false);
+            if (valid) {
+              mycache.valid = false;
+            }
+          });
+        }
+      }
+
+      Core writer = Grappa::mycore();
+      // Unlock this object and update the copyset.
+      call<S,C>(target.core(), [target, value, writer] {
+        auto& info = GlobalAddress<T>::find_wi_owner_info(target);
+
+        info.copyset.reset();
+        info.copyset[writer] = true;
+        CHECK(info.locked);
+        info.locked = false;
+        *target.pointer() = value;
+      });
+      mycache.valid = true;
+      mycache.assign(&value);
+      GlobalAddress<T>::deactive_cache(mycache);
     }
         
     /// Blocking remote write.
     /// @warning Target object must lie on a single node (not span blocks in global address space).
     template< SyncMode S = SyncMode::Blocking, 
+              CacheMode M = CacheMode::WriteBack,
               GlobalCompletionEvent * C = &impl::local_gce,
               typename T = decltype(nullptr),
               typename U = decltype(nullptr) >
     void write(GlobalAddress<T> target, U value) {
       static_assert(std::is_convertible<T,U>(), "type of value must match GlobalAddress type");
       delegate_writes++;
-      // TODO: don't return any val, requires changes to `delegate::call()`.
-      return call<S,C>(target.core(), [target, value] {
-        delegate_write_targets++;
-        *target.pointer() = value;
-      });
+      double start_time = Grappa::timestamp();
+      if (M == CacheMode::WriteThrough) {
+        return __vanilla_write<S,M,C>(target);
+      }
+
+      switch (FLAGS_cache_proto) {
+        case GRAPPA_VANILLA:
+          __vanilla_write<S,M,C>(target); break;
+        case GRAPPA_TARDIS:
+          __tardis_write<S,M,C>(target); break;
+        case GRAPPA_WI:
+          __wi_write<S,M,C>(target); break;
+        default:
+          CHECK(0) << "No such protocol " << FLAGS_cache_proto;
+      }
+      delegate_write_latency += (Grappa::timestamp() - start_time);
     }
     
     /// Fetch the value at `target`, increment the value stored there with `inc` and return the

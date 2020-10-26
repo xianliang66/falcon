@@ -59,6 +59,7 @@
 #include <glog/logging.h>
 
 #include "common.hpp"
+#include "TardisCache.hpp"
 //#include "Metrics.hpp"
 
 //#include "PerformanceTools.hpp"
@@ -192,6 +193,9 @@ public:
   const Core & locale_mycore;
   const Core & locale_cores;
 
+  /// Per-core pts used by Tardis protocol.
+  timestamp_t pts = 0;
+
   /// What locale is responsible for this core?
   inline Locale locale_of( Core c ) const { 
     return locale_of_core_[c];
@@ -308,6 +312,8 @@ namespace Grappa {
 
 /// @addtogroup Communication
 /// @{
+
+inline timestamp_t& mypts() { return global_communicator.pts; }
 
 /// How many cores are there in this job?
 inline const Core cores() { return global_communicator.cores; }
