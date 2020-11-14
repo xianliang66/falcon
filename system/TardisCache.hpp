@@ -12,8 +12,9 @@ enum cache_proto_t { GRAPPA_VANILLA = 0, GRAPPA_TARDIS, GRAPPA_WI };
 static const char* cache_proto_str[] =  { "Vanilla", "Tardis", "Write-Invalidation" };
 // The definiations are given in TardisCache.cpp
 DECLARE_int32(cache_proto);
-static const int MAX_CACHE_NUMBER = 160;
+DECLARE_int32(max_cache_number);
 DECLARE_int32(lease);
+static const int MAX_NODE_NUMBER = 160;
 
 typedef uint32_t timestamp_t;
 
@@ -67,7 +68,7 @@ struct rpc_read_result {
 };
 
 struct wi_owner_cache_info {
-  std::bitset<MAX_CACHE_NUMBER> copyset;
+  std::bitset<MAX_NODE_NUMBER> copyset;
   // Whether this object is locked globally.
   bool locked;
   wi_owner_cache_info(): locked(false) {}
@@ -86,3 +87,12 @@ using tardis_o_t = Grappa::impl::tardis_owner_cache_info;
 using wi_o_t = Grappa::impl::wi_owner_cache_info;
 using tardis_c_t = Grappa::impl::tardis_cache_info;
 using wi_c_t = Grappa::impl::wi_cache_info;
+
+/// C++ template is hard to use!!!
+namespace GlobalCacheData {
+  static std::unordered_map<uintptr_t, tardis_o_t> tardis_owner_cache;
+  static std::unordered_map<uintptr_t, wi_o_t> wi_owner_cache;
+  static std::unordered_map<uintptr_t, tardis_c_t> tardis_cache;
+  static std::unordered_map<uintptr_t, wi_c_t> wi_cache;
+  static std::list<uintptr_t> lru;
+};

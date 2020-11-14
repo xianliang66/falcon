@@ -6,9 +6,9 @@
 
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 10, "Log2 number of vertices.");
-DEFINE_int32(edgefactor, 16, "Average number of edges per vertex.");
-DEFINE_int64(root, 16, "Average number of edges per vertex.");
+DEFINE_int32(scale, 20, "Log2 number of vertices.");
+DEFINE_int32(edgefactor, 36, "Average number of edges per vertex.");
+DEFINE_int64(root, 1, "Average number of edges per vertex.");
 
 using namespace Grappa;
 
@@ -26,6 +26,8 @@ void dump_sssp_graph(GlobalAddress<G> &g);
 bool global_complete = false;
 // local completion flag
 bool local_complete = false;
+
+static int nupdates = 0;
 
 void do_sssp(GlobalAddress<G> &g, int64_t root) {
 
@@ -46,43 +48,46 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
 
     int iter = 0;
     while (!global_complete) {
-      VLOG(1) << "iteration --> " << iter++;
-
       global_complete = true;
-      on_all_cores([]{ local_complete = true; });
-
+      iter++;
       // iterate over all vertices of the graph
       forall(g, [=](VertexID vsid, G::Vertex& vs) {
+          auto v = delegate::read(g->vs+vsid);
+          bool update = false;
 
-        if (vs->dist !=  std::numeric_limits<double>::max()) {
-
-          // if vertex is visited (i.e. dist != max()) then
-          // visit all the adjacencies of the vertex 
-          // and update there dist values if needed
-          double dist = vs->dist;
+          if (!v.data.seen) {
+            update = true;
+            v.data.seen = true;
+          }
           
-          forall(adj(g,vs), [=](G::Edge& e){
+          serial_for(adj(g,vs), [vsid, &v,&update,g](G::Edge& e){
             // calculate potentinal new distance and...
-            double sum = dist + e->weight;
-            // ...send it to the core where the vertex is located
-            delegate::call<async>(e.ga, [=](G::Vertex& ve){
-              if (sum < ve->dist) {
-                // update vertex parameters
-                ve->dist = sum;
-                ve->parent = vsid;
-
-                // update local global_complete flag
-                local_complete = false;
-              }
-            });
+            auto neighbour = delegate::read(g->vs+e.id);
+            double new_dist = neighbour.data.dist + e->weight;
+            if (new_dist < v.data.dist) {
+              nupdates++;
+              local_complete = false;
+              update = true;
+              v.data.dist = new_dist;
+              //VLOG(1) << vsid << " parent from " << v.data.parent << " to " << e.id << " edge " << e->weight << " new dist " << new_dist;
+              v.data.parent = e.id;
+            }
           });//forall_here
-        }//if
+          if (update) {
+            delegate::write(g->vs+vsid, v);
+          }
       });//forall
 
       // find if SSSP calculation is completed (must be completed
       // in each core)
       global_complete = reduce<bool,collective_and>(&local_complete);
 
+      on_all_cores([iter]{ 
+          local_complete = true;
+          VLOG(1) << "Core " << Grappa::mycore() << " iteration --> " << iter << " updates " << nupdates;
+
+          nupdates = 0;
+      });
     }//while
 }
 
@@ -110,8 +115,12 @@ int main(int argc, char* argv[]) {
     auto root = FLAGS_root;
     do_sssp(g, root);
 
+    if (FLAGS_metrics) Metrics::merge_and_print();
+    Metrics::merge_and_dump_to_file();
+
     double this_sssp_time = walltime() - t;
-    LOG(INFO) << "(root=" << root << ", time=" << this_sssp_time << ")";
+    LOG(INFO) << "(root=" << root << ", time=" << this_sssp_time << ") " <<
+      cache_proto_str[FLAGS_cache_proto];
     sssp_time += this_sssp_time;
 
     if (!verified) {
@@ -125,9 +134,6 @@ int main(int argc, char* argv[]) {
     sssp_mteps += sssp_nedge / this_sssp_time / 1.0e6;
 
     LOG(INFO) << "\n" << sssp_nedge << "\n" << sssp_time << "\n" << sssp_mteps;
-
-    if (FLAGS_metrics) Metrics::merge_and_print();
-    Metrics::merge_and_dump_to_file();
 
     // dump graph after computation
     //dump_sssp_graph(g);

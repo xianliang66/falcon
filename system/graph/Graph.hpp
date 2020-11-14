@@ -57,8 +57,7 @@ namespace Grappa {
   /// @addtogroup Graph
   /// @{
   
-  /// Currently just an overload for int64, may someday be used for distinguishing parameters in forall().
-  using VertexID = int64_t;
+  using VertexID = uint32_t;
   
   /// Empty struct, for specifying lack of either Vertex or Edge data in @ref Graph.
   struct Empty {};
@@ -68,8 +67,8 @@ namespace Grappa {
     struct VertexBase {
       bool valid; // vertices with no connections (in/out) are marked invalid TODO: eliminate these from the representation entirely
       VertexID * local_adj; // adjacencies that are local
-      int64_t nadj;        // number of adjacencies
-      int64_t local_sz;    // size of local allocation (regardless of how full it is)
+      uint32_t nadj;        // number of adjacencies
+      uint32_t local_sz;    // size of local allocation (regardless of how full it is)
       
       VertexBase(): valid(true), local_adj(nullptr), nadj(0), local_sz(0) {}
       
@@ -100,39 +99,28 @@ namespace Grappa {
     ///   void parent(int64_t parent) { data = parent; }
     /// };
     /// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    template< typename T, typename E, bool HeapData = (sizeof(T) > BLOCK_SIZE-sizeof(VertexBase)-sizeof(E*)) >
+    template< typename T, typename E>
     struct Vertex : public VertexBase {
       T data;
       E * local_edge_state;
     
       Vertex(): VertexBase(), data() {}
       Vertex(const VertexBase& v): VertexBase(v), data() {}
+      Vertex(const Vertex& v): VertexBase(v) { this->data = v.data; }
       ~Vertex() {}
     
       T* operator->() { return &data; }
       const T* operator->() const { return &data; }
+      Vertex& operator=(const Vertex& other) {
+        this->valid = other.valid;
+        this->nadj = other.nadj;
+        this->data = other.data;
+        // Do not copy local_edge_state that is only valid in the owner's core.
+        return *this;
+      }
       
       static constexpr size_t global_heap_size() { return sizeof(Vertex); }
       static constexpr size_t locale_heap_size() { return 0; }
-      static constexpr size_t size() { return locale_heap_size() + global_heap_size(); }
-      
-    } GRAPPA_BLOCK_ALIGNED;
-  
-    template< typename T, typename E >
-    struct Vertex<T, E, /*HeapData = */ true> : public VertexBase {
-      T& data;
-      E * local_edge_state;
-    
-      Vertex(): VertexBase(), data(*locale_alloc<T>()) {}
-      Vertex(const VertexBase& v): VertexBase(v), data(*locale_alloc<T>()) {}
-    
-      ~Vertex() { locale_free(&data); }
-    
-      T* operator->() { return &data; }
-      const T* operator->() const { return &data; }
-      
-      static constexpr size_t global_heap_size() { return sizeof(Vertex); }
-      static constexpr size_t locale_heap_size() { return sizeof(T); }
       static constexpr size_t size() { return locale_heap_size() + global_heap_size(); }
       
     } GRAPPA_BLOCK_ALIGNED;

@@ -10,10 +10,18 @@ struct SSSPData {
   int64_t level;
   bool seen;
 
+  SSSPData& operator=(const SSSPData& other) {
+    this->dist = other.dist;
+    this->parent = other.parent;
+    this->level = other.level;
+    this->seen = other.seen;
+    return *this;
+  }
+
   void init(int64_t nadj) {
     dist = std::numeric_limits<double>::max();
     
-    // parent = -1;
+    parent = -1;
     level = 0;
     seen = false;
   }
@@ -21,7 +29,7 @@ struct SSSPData {
 
 struct SSSPEdgeData {
   double weight;
-  SSSPEdgeData(): weight(drand48()) {}
+  SSSPEdgeData(): weight(rand() % 128) {}
 };
 
 using G = Graph<SSSPData,SSSPEdgeData>;
@@ -35,7 +43,7 @@ public:
     return delegate::call(g->vs+j, [](Vertex& v){ return v->dist; });
   }
 
-  static double get_edge_weight(GlobalAddress<G> g, int64_t i, int64_t j) {
+  static double get_edge_weight(GlobalAddress<G> g, int64_t j, int64_t i) {
     return delegate::call(g->vs+i, [=](Vertex& v){ 
         for (int k = 0; v.nadj; k++) {
           auto e = g->edge(v,k);

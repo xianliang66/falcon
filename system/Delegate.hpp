@@ -473,6 +473,7 @@ retry:
     }
 
     template< SyncMode S = SyncMode::Blocking, 
+              CacheMode M = CacheMode::WriteBack,
               GlobalCompletionEvent * C = &impl::local_gce,
               typename T = decltype(nullptr),
               typename U = decltype(nullptr) >
@@ -483,6 +484,7 @@ retry:
     }
 
     template< SyncMode S = SyncMode::Blocking, 
+              CacheMode M = CacheMode::WriteBack,
               GlobalCompletionEvent * C = &impl::local_gce,
               typename T = decltype(nullptr),
               typename U = decltype(nullptr) >
@@ -515,6 +517,7 @@ retry:
     }
 
     template< SyncMode S = SyncMode::Blocking, 
+              CacheMode M = CacheMode::WriteBack,
               GlobalCompletionEvent * C = &impl::local_gce,
               typename T = decltype(nullptr),
               typename U = decltype(nullptr) >
@@ -609,16 +612,17 @@ retry:
       delegate_writes++;
       double start_time = Grappa::timestamp();
       if (M == CacheMode::WriteThrough) {
-        return __vanilla_write<S,M,C>(target);
+        delegate_write_latency += (Grappa::timestamp() - start_time);
+        return __vanilla_write<S,M,C>(target, value);
       }
 
       switch (FLAGS_cache_proto) {
         case GRAPPA_VANILLA:
-          __vanilla_write<S,M,C>(target); break;
+          __vanilla_write<S,M,C>(target, value); break;
         case GRAPPA_TARDIS:
-          __tardis_write<S,M,C>(target); break;
+          __tardis_write<S,M,C>(target, value); break;
         case GRAPPA_WI:
-          __wi_write<S,M,C>(target); break;
+          __wi_write<S,M,C>(target, value); break;
         default:
           CHECK(0) << "No such protocol " << FLAGS_cache_proto;
       }

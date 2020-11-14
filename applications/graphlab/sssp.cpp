@@ -46,7 +46,7 @@ DEFINE_int32(edgefactor, 16, "Average number of edges per vertex.");
 
 DEFINE_int32(trials, 3, "Number of timed trials to run and average over.");
 
-DEFINE_string(path, "", "Path to graph source file.");
+DEFINE_string(path, "twitter_bintsv4.net", "Path to graph source file.");
 DEFINE_string(format, "bintsv4", "Format of graph source file.");
 
 GRAPPA_DEFINE_METRIC(SimpleMetric<double>, tuple_time, 0);

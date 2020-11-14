@@ -95,16 +95,6 @@ static const intptr_t core_mask = (1L << core_bits) - 1;
 static const intptr_t pool_mask = (1L << pool_bits) - 1;
 static const intptr_t pointer_mask = (1L << pointer_bits) - 1;
 
-/// C++ template is hard to use!!!
-class GlobalCacheData {
-public:
-  static std::unordered_map<uintptr_t, tardis_o_t>& tardis_owner_cache;
-  static std::unordered_map<uintptr_t, wi_o_t>& wi_owner_cache;
-  static std::unordered_map<uintptr_t, tardis_c_t> tardis_cache;
-  static std::unordered_map<uintptr_t, wi_c_t> wi_cache;
-  static std::list<uintptr_t>& lru;
-};
-
 /// @addtogroup Memory
 /// @{
 
@@ -120,13 +110,14 @@ public:
 template< typename T >
 class GlobalAddress {
 public:
+  bool is_owner(void) { return Grappa::mycore() == core(); }
   static tardis_o_t& find_tardis_owner_info( const GlobalAddress<T>& g ) {
     CHECK(FLAGS_cache_proto == GRAPPA_TARDIS);
     auto& owner_cache = GlobalCacheData::tardis_owner_cache;
     auto iter = owner_cache.find(g.raw_bits());
     // Initial cold miss.
     if (iter == owner_cache.end()) {
-      owner_cache[g.raw_bits()] = T();
+      owner_cache[g.raw_bits()] = tardis_o_t();
       return owner_cache[g.raw_bits()];
     }
     return iter->second;
@@ -138,7 +129,7 @@ public:
     auto iter = owner_cache.find(g.raw_bits());
     // Initial cold miss.
     if (iter == owner_cache.end()) {
-      owner_cache[g.raw_bits()] = T();
+      owner_cache[g.raw_bits()] = wi_o_t();
       return owner_cache[g.raw_bits()];
     }
     return iter->second;
@@ -158,7 +149,7 @@ public:
       if (valid != nullptr) { *valid = false; }
       // Return a stub
       if (!insert_new) { return cache.begin()->second; }
-      while (lru.size() >= MAX_CACHE_NUMBER) {
+      while (lru.size() >= FLAGS_max_cache_number) {
         auto victim = lru.rbegin();
         while (victim != lru.rend() &&
           cache[*victim].usedcnt > 0)
@@ -215,7 +206,7 @@ public:
       if (valid != nullptr) { *valid = false; }
       // Return a stub
       if (!insert_new) { return cache.begin()->second; }
-      while (lru.size() >= MAX_CACHE_NUMBER) {
+      while (lru.size() >= FLAGS_max_cache_number) {
         auto victim = lru.rbegin();
         while (victim != lru.rend() &&
           cache[*victim].usedcnt > 0)
