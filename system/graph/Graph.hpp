@@ -655,11 +655,11 @@ namespace Grappa {
       auto count = [](GlobalAddress<Vertex> v){
         delegate::call<SyncMode::Async>(v.core(), [v]{ v->local_sz++; });
       };
-      count(g->vs+e.v0);
-      if (!directed) count(g->vs+e.v1);
+      count(g->vs+e.v1);
+      if (!directed) count(g->vs+e.v0);
   #endif
     });
-    VLOG(2) << "count_time: " << walltime() - t;
+    VLOG(3) << "count_time: " << walltime() - t;
 
   #ifdef SMALL_GRAPH
     t = walltime();  
@@ -692,6 +692,7 @@ namespace Grappa {
     VLOG(3) << "after adj allocs";
 
     // scatter
+    // For each edge (v0->v1), owner is v1.
     forall(tg.edges, tg.nedge, [g,directed](TupleGraph::Edge& e){
       auto scatter = [g](int64_t vi, int64_t adj) {
         auto vaddr = g->vs+vi;
@@ -700,8 +701,9 @@ namespace Grappa {
           v.local_adj[v.nadj++] = adj;
         });
       };
-      scatter(e.v0, e.v1);
-      if (!directed) scatter(e.v1, e.v0);
+      // e.v0->e.v1
+      scatter(e.v1, e.v0);
+      if (!directed) scatter(e.v0, e.v1);
     });
     VLOG(3) << "after scatter, nv = " << g->nv;
 

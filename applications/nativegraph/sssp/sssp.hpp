@@ -43,11 +43,11 @@ public:
     return delegate::call(g->vs+j, [](Vertex& v){ return v->dist; });
   }
 
-  static double get_edge_weight(GlobalAddress<G> g, int64_t j, int64_t i) {
-    return delegate::call(g->vs+i, [=](Vertex& v){ 
+  static double get_edge_weight(GlobalAddress<G> g, int64_t i, int64_t j) {
+    return delegate::call(g->vs+j, [=](Vertex& v){ 
         for (int k = 0; v.nadj; k++) {
           auto e = g->edge(v,k);
-          if (e.id == j)
+          if (e.id == i)
             return e->weight;
         }
         // we can not reach this, possibly better to throw exception
@@ -55,8 +55,9 @@ public:
     });
   }
 
-  static inline int64_t verify(TupleGraph tg, GlobalAddress<G> g, int64_t root) {
-    VerificatorBase<G>::verify(tg,g,root);
+  static inline int64_t verify(TupleGraph tg, GlobalAddress<G> g, int64_t root,
+      bool directed) {
+    VerificatorBase<G>::verify(tg,g,root,directed);
 
     // SSSP distances verification
     forall(tg.edges, tg.nedge, [=](TupleGraph::Edge& e){
@@ -69,14 +70,19 @@ public:
       /* SSSP specific checks */
       auto ti = VerificatorBase<G>::get_parent(g,i), tj = VerificatorBase<G>::get_parent(g,j);
       auto di = get_dist(g,i), dj = get_dist(g,j);
-      auto wij = get_edge_weight(g,i,j), wji = get_edge_weight(g,j,i);
+      double wij = get_edge_weight(g,i,j), wji;
+      if (!directed) {
+        wji = get_edge_weight(g,j,i);
+      }
       CHECK(!((di < dj) && ((di + wij) < dj))) << "Error, distance of the nearest neighbor is too great :" 
         << "(" << i << "," << di << ")" << "--" << wij << "-->" <<  "(" << j << "," << dj << ")" ;
+      if (!directed)
       CHECK(!((dj < di) && ((dj + wji) < di))) << "Error, distance of the nearest neighbor is too great : "
         << "(" << j << "," << dj << ")" << "--" << wji << "-->" <<  "(" << i << "," << di << ")" ;
       CHECK(!((i == tj) && ((di + wij) != dj))) << "Error, distance of the child vertex is not equil to "
         << "sum of its parent distance and edge weight :" 
         << "(" << i << "," << di << ")" << "--" << wij << "-->" <<  "(" << j << "," << dj << ")" ;
+      if (!directed)
       CHECK(!((j == ti) && ((dj + wji) != di))) << "Error, distance of the child vertex is not equil to "
         << "sum of its parent distance and edge weight :"
         << "(" << j << "," << dj << ")" << "--" << wji << "-->" <<  "(" << i << "," << di << ")" ;

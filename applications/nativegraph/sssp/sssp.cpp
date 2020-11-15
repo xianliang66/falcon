@@ -6,7 +6,7 @@
 
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 20, "Log2 number of vertices.");
+DEFINE_int32(scale, 18, "Log2 number of vertices.");
 DEFINE_int32(edgefactor, 36, "Average number of edges per vertex.");
 DEFINE_int64(root, 1, "Average number of edges per vertex.");
 
@@ -27,7 +27,7 @@ bool global_complete = false;
 // local completion flag
 bool local_complete = false;
 
-static int nupdates = 0;
+static uint32_t nupdates = 0;
 
 void do_sssp(GlobalAddress<G> &g, int64_t root) {
 
@@ -48,6 +48,7 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
 
     int iter = 0;
     while (!global_complete) {
+      double start_time = Grappa::walltime();
       global_complete = true;
       iter++;
       // iterate over all vertices of the graph
@@ -60,20 +61,19 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
             v.data.seen = true;
           }
           
-          serial_for(adj(g,vs), [vsid, &v,&update,g](G::Edge& e){
+          forall<SyncMode::Blocking,nullptr>(adj(g,vs), [vsid, &v,&update,g](G::Edge& e){
             // calculate potentinal new distance and...
             auto neighbour = delegate::read(g->vs+e.id);
             double new_dist = neighbour.data.dist + e->weight;
             if (new_dist < v.data.dist) {
-              nupdates++;
               local_complete = false;
               update = true;
               v.data.dist = new_dist;
-              //VLOG(1) << vsid << " parent from " << v.data.parent << " to " << e.id << " edge " << e->weight << " new dist " << new_dist;
               v.data.parent = e.id;
             }
           });//forall_here
           if (update) {
+            nupdates++;
             delegate::write(g->vs+vsid, v);
           }
       });//forall
@@ -82,10 +82,12 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
       // in each core)
       global_complete = reduce<bool,collective_and>(&local_complete);
 
+      uint32_t total_updates = reduce<uint32_t,collective_sum>(&nupdates);
+      LOG(INFO) << "Iteration --> " << iter << " updates " << total_updates <<
+        " in " << Grappa::walltime() - start_time << " s.";
+
       on_all_cores([iter]{ 
           local_complete = true;
-          VLOG(1) << "Core " << Grappa::mycore() << " iteration --> " << iter << " updates " << nupdates;
-
           nupdates = 0;
       });
     }//while
@@ -96,6 +98,7 @@ int main(int argc, char* argv[]) {
   Grappa::run([]{
     int64_t NE = (1L << FLAGS_scale) * FLAGS_edgefactor;
     bool verified = false;
+    bool directed = true;
     double t;
     
     t = walltime();
@@ -105,7 +108,13 @@ int main(int argc, char* argv[]) {
     auto tg = TupleGraph::Kronecker(FLAGS_scale, NE, 111, 222);
 
     // create graph with incorporated Vertex
-    auto g = G::Undirected( tg );
+    GlobalAddress<G> g;
+    if (directed) {
+      g = G::Directed( tg );
+    }
+    else {
+      g = G::Undirected( tg );
+    }
     graph_create_time = (walltime()-t);
     
     LOG(INFO) << "graph generated (#nodes = " << g->nv << "), " << graph_create_time;
@@ -120,13 +129,13 @@ int main(int argc, char* argv[]) {
 
     double this_sssp_time = walltime() - t;
     LOG(INFO) << "(root=" << root << ", time=" << this_sssp_time << ") " <<
-      cache_proto_str[FLAGS_cache_proto];
+      cache_proto_str[FLAGS_cache_proto] << " #E:" << tg.nedge << " #V:" << g->nv;
     sssp_time += this_sssp_time;
 
     if (!verified) {
       // only verify the first one to save time
       t = walltime();
-      sssp_nedge = Verificator<G>::verify(tg, g, root);
+      sssp_nedge = Verificator<G>::verify(tg, g, root, directed);
       verify_time = (walltime()-t);
       LOG(INFO) << verify_time;
       verified = true;

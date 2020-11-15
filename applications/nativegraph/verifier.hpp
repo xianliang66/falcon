@@ -58,7 +58,8 @@ public:
     });
   }
 
-  static inline int64_t verify(TupleGraph tg, GlobalAddress<G> g, int64_t root) {
+  static inline int64_t verify(TupleGraph tg, GlobalAddress<G> g, int64_t root,
+      bool directed) {
 
     // check root
     delegate::call(g->vs+root, [=](Vertex& v){
@@ -83,7 +84,8 @@ public:
       // All neighbors must be in the tree.
       auto ti = get_parent(g,i), tj = get_parent(g,j);
       CHECK(!(ti >= 0 && tj < 0)) << "Error! ti=" << ti << ", tj=" << tj;
-      CHECK(!(tj >= 0 && ti < 0)) << "Error! ti=" << ti << ", tj=" << tj;
+      if (!directed)
+        CHECK(!(tj >= 0 && ti < 0)) << "Error! ti=" << ti << ", tj=" << tj;
       if (ti < 0) // both i & j have the same sign
         return;
 
