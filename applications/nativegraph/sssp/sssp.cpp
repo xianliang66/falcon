@@ -4,6 +4,7 @@
 
 #include "sssp.hpp"
 
+#define NO_TEST 5
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
 DEFINE_int32(scale, 18, "Log2 number of vertices.");
@@ -14,7 +15,6 @@ using namespace Grappa;
 
 int64_t nedge_traversed;
 
-GRAPPA_DEFINE_METRIC(SummarizingMetric<double>, sssp_mteps, 0);
 GRAPPA_DEFINE_METRIC(SummarizingMetric<double>, sssp_time, 0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<int64_t>, sssp_nedge, 0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<double>, graph_create_time, 0);
@@ -28,6 +28,17 @@ bool global_complete = false;
 bool local_complete = false;
 
 static uint32_t nupdates = 0;
+
+void reset_sssp(GlobalAddress<G>& g) {
+    forall(g, [=](VertexID vsid, G::Vertex& vs) {
+      vs.data.dist = std::numeric_limits<uint8_t>::max();
+      vs.data.parent = -1;
+      vs.data.level = 0;
+      vs.data.seen = false;
+    });
+    on_all_cores([] { global_complete = local_complete = false; });
+    on_all_cores([] { delegate::reset_cache(); });
+}
 
 void do_sssp(GlobalAddress<G> &g, int64_t root) {
 
@@ -54,26 +65,32 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
       // iterate over all vertices of the graph
       forall(g, [=](VertexID vsid, G::Vertex& vs) {
           auto v = delegate::read(g->vs+vsid);
-          bool update = false;
+          if (v.nadj == 0) {
+            return;
+          }
+          bool update = false, init_update = false;
 
           if (!v.data.seen) {
+            init_update = true;
             update = true;
             v.data.seen = true;
           }
           
-          forall<SyncMode::Blocking,nullptr>(adj(g,vs), [vsid, &v,&update,g](G::Edge& e){
+          forall<SyncMode::Blocking,nullptr>(adj(g,vs), [vsid, &v,&update,&init_update,g](G::Edge& e){
             // calculate potentinal new distance and...
             auto neighbour = delegate::read(g->vs+e.id);
             double new_dist = neighbour.data.dist + e->weight;
             if (new_dist < v.data.dist) {
               local_complete = false;
               update = true;
+              init_update = false;
               v.data.dist = new_dist;
               v.data.parent = e.id;
             }
           });//forall_here
           if (update) {
-            nupdates++;
+            if (!init_update)
+              nupdates++;
             delegate::write(g->vs+vsid, v);
           }
       });//forall
@@ -107,6 +124,11 @@ int main(int argc, char* argv[]) {
     // Graph500 Kronecker generator to get a power-law graph
     auto tg = TupleGraph::Kronecker(FLAGS_scale, NE, 111, 222);
 
+    // Twitter has 42M vertices.
+    // SSSPData is 12B, tardis_metadata is 28B, while wi_metadata is 40B.
+    // Tardis:WI=40:52
+    //auto tg = TupleGraph::Load("twitter_bintsv4.net", "bintsv4");
+
     // create graph with incorporated Vertex
     GlobalAddress<G> g;
     if (directed) {
@@ -118,19 +140,27 @@ int main(int argc, char* argv[]) {
     graph_create_time = (walltime()-t);
     
     LOG(INFO) << "graph generated (#nodes = " << g->nv << "), " << graph_create_time;
-      
-    t = walltime();
 
+    on_all_cores( [] { Grappa::Metrics::reset(); });
     auto root = FLAGS_root;
-    do_sssp(g, root);
+    for (int i = 0; i < NO_TEST; i++) {
+      t = walltime();
 
+      do_sssp(g, root);
+
+      double this_sssp_time = walltime() - t;
+      LOG(INFO) << "(root=" << root << ", time=" << this_sssp_time << ") " <<
+        cache_proto_str[FLAGS_cache_proto] << " #E:" << tg.nedge << " #V:" << g->nv;
+      sssp_time += this_sssp_time;
+
+      if (i < NO_TEST - 1) {
+        reset_sssp(g);
+      }
+    }
     if (FLAGS_metrics) Metrics::merge_and_print();
     Metrics::merge_and_dump_to_file();
 
-    double this_sssp_time = walltime() - t;
-    LOG(INFO) << "(root=" << root << ", time=" << this_sssp_time << ") " <<
-      cache_proto_str[FLAGS_cache_proto] << " #E:" << tg.nedge << " #V:" << g->nv;
-    sssp_time += this_sssp_time;
+    LOG(INFO) << sssp_time;
 
     if (!verified) {
       // only verify the first one to save time
@@ -140,12 +170,6 @@ int main(int argc, char* argv[]) {
       LOG(INFO) << verify_time;
       verified = true;
     }
-    sssp_mteps += sssp_nedge / this_sssp_time / 1.0e6;
-
-    LOG(INFO) << "\n" << sssp_nedge << "\n" << sssp_time << "\n" << sssp_mteps;
-
-    // dump graph after computation
-    //dump_sssp_graph(g);
 
     tg.destroy();
     g->destroy();

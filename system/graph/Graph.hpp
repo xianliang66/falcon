@@ -355,7 +355,7 @@ namespace Grappa {
     }
     
     // Constructor
-    static GlobalAddress<Graph> create(const TupleGraph& tg, bool directed = false, bool solo_invalid = true);
+    static GlobalAddress<Graph> create(const TupleGraph& tg, bool directed = false, bool solo_invalid = false);
     
     static GlobalAddress<Graph> Undirected(const TupleGraph& tg) { return create(tg, false); }
     static GlobalAddress<Graph> Directed(const TupleGraph& tg) { return create(tg, true); }
@@ -612,7 +612,7 @@ namespace Grappa {
     auto g = symmetric_global_alloc<Graph>();
     
     // find nv
-        t = walltime();
+    t = walltime();
     forall(tg.edges, tg.nedge, [g](TupleGraph::Edge& e){
       if (e.v0 > g->nv) { g->nv = e.v0; }
       if (e.v1 > g->nv) { g->nv = e.v1; }
@@ -620,7 +620,7 @@ namespace Grappa {
     on_all_cores([g]{
       g->nv = Grappa::allreduce<int64_t,collective_max>(g->nv) + 1;
     });
-        VLOG(2) << "find_nv_time: " << walltime() - t;
+    VLOG(3) << "find_nv_time: " << walltime() - t;
 
     auto vs = global_alloc<Vertex>(g->nv);
     auto self = g;
@@ -629,63 +629,22 @@ namespace Grappa {
       for (Vertex& v : iterate_local(g->vs, g->nv)) {
         new (&v) Vertex();
       }
-  
-  #ifdef SMALL_GRAPH
-      // g->scratch = locale_alloc<int64_t>(g->nv);
-      if (locale_mycore() == 0) g->scratch = locale_alloc<int64_t>(g->nv);
-      barrier();
-      if (locale_mycore() == 0) {
-        memset(g->scratch, 0, sizeof(int64_t)*g->nv);
-      } else {
-        g->scratch = delegate::call(mylocale()*locale_cores(), [g]{ return g->scratch; });
-      }
-      VLOG(0) << "locale = " << mylocale() << ", scratch = " << g->scratch;
-  #endif
     });
-                                                              t = walltime();
+
+    t = walltime();
     // count the outgoing/undirected edges per vertex
     forall(tg.edges, tg.nedge, [g,directed](TupleGraph::Edge& e){
       CHECK_LT(e.v0, g->nv); CHECK_LT(e.v1, g->nv);
-  #ifdef SMALL_GRAPH
-      // g->scratch[e.v0]++;
-      // if (!directed) g->scratch[e.v1]++;
-      __sync_fetch_and_add(g->scratch+e.v0, 1);
-      if (!directed) __sync_fetch_and_add(g->scratch+e.v1, 1);
-  #else    
       auto count = [](GlobalAddress<Vertex> v){
         delegate::call<SyncMode::Async>(v.core(), [v]{ v->local_sz++; });
       };
       count(g->vs+e.v1);
       if (!directed) count(g->vs+e.v0);
-  #endif
     });
     VLOG(3) << "count_time: " << walltime() - t;
 
-  #ifdef SMALL_GRAPH
-    t = walltime();  
-  #ifdef USE_MPI3_COLLECTIVES
-    on_all_cores([g]{
-      MPI_Request r; int done;
-      MPI_Iallreduce(MPI_IN_PLACE, g->scratch, g->nv, MPI_INT64_T, MPI_SUM, global_communicator.grappa_comm, &r);
-      do {
-        MPI_Test( &r, &done, MPI_STATUS_IGNORE );
-        if(!done) { Grappa::yield(); }
-      } while(!done);
-    });
-  #else
-    on_all_cores([g]{ allreduce_inplace<int64_t,collective_add>(g->scratch, g->nv); });
-  #endif // USE_MPI3_COLLECTIVES
-    VLOG(2) << "allreduce_inplace_time: " << walltime() - t;
-    // on_all_cores([g]{ VLOG(5) << util::array_str("scratch", g->scratch, g->nv, 25); });
-  #endif // SMALL_GRAPH  
-
     // allocate space for each vertex's adjacencies (+ duplicates)
     forall(g->vs, g->nv, [g](int64_t i, Vertex& v) {
-  #ifdef SMALL_GRAPH
-      // adjust b/c allreduce didn't account for having 1 instance per locale
-      v.local_sz = g->scratch[i] / locale_cores();
-  #endif
-  
       v.nadj = 0;
       if (v.local_sz > 0) v.local_adj = new VertexID[v.local_sz];
     });
@@ -729,7 +688,7 @@ namespace Grappa {
       if (locale_mycore() == 0) locale_free(g->scratch);
   #endif
   
-      VLOG(2) << "nadj_local = " << g->nadj_local;
+      VLOG(3) << "nadj_local = " << g->nadj_local;
   
       // allocate storage for local vertices' adjacencies
       g->adj_buf = locale_alloc<VertexID>(g->nadj_local);
@@ -748,7 +707,9 @@ namespace Grappa {
       for (Vertex& v : iterate_local(g->vs, g->nv)) {
         auto adj = g->adj_buf + offset;
         Grappa::memcpy(adj, v.local_adj, v.nadj);
-        if (v.local_sz > 0) delete[] v.local_adj;
+        if (v.local_sz > 0) {
+          delete[] v.local_adj;
+        }
         v.local_sz = v.nadj;
         v.local_adj = adj;
         v.local_edge_state = g->edge_storage+offset;
@@ -756,7 +717,7 @@ namespace Grappa {
       }
       CHECK_EQ(offset, g->nadj_local);
     });
-    
+
     if (solo_invalid) {
       // (note: this isn't necessary if we don't create vertices for those with no edges)
       // find which are actually active (first, those with outgoing edges)

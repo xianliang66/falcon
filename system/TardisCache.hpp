@@ -30,7 +30,7 @@ struct cache_info_base {
   // How many tasks who holds the reference to cache_info are there?
   mutable char usedcnt;
   // These two fields implements template parameters.
-  mutable size_t size;
+  mutable uint16_t size;
   mutable void* object;
   // O(1) remove/insertion time for LRU list.
   mutable std::list<uintptr_t>::iterator lru_iter;

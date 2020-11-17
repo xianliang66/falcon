@@ -5,9 +5,9 @@ extern int64_t nedge_traversed;
 
 /* Vertex specific data */
 struct SSSPData {
-  double dist;
-  int64_t parent;
-  int64_t level;
+  uint8_t dist;
+  int32_t parent;
+  int32_t level;
   bool seen;
 
   SSSPData& operator=(const SSSPData& other) {
@@ -19,7 +19,7 @@ struct SSSPData {
   }
 
   void init(int64_t nadj) {
-    dist = std::numeric_limits<double>::max();
+    dist = std::numeric_limits<uint8_t>::max();
     
     parent = -1;
     level = 0;
@@ -40,7 +40,7 @@ class Verificator : public VerificatorBase<G> {
 public:
 
   static double get_dist(GlobalAddress<G> g, int64_t j) {
-    return delegate::call(g->vs+j, [](Vertex& v){ return v->dist; });
+    return delegate::read(g->vs+j).data.dist;
   }
 
   static double get_edge_weight(GlobalAddress<G> g, int64_t i, int64_t j) {

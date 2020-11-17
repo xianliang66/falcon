@@ -50,6 +50,8 @@ GRAPPA_DECLARE_METRIC(SummarizingMetric<double>, delegate_read_latency);
 GRAPPA_DECLARE_METRIC(SummarizingMetric<double>, delegate_write_latency);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_cache_hit);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_cache_miss);
+GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_inv);
+GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_useless_inv);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_cache_expired);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_reads);
 GRAPPA_DECLARE_METRIC(SimpleMetric<uint64_t>, delegate_read_targets);
@@ -312,6 +314,10 @@ namespace Grappa {
       }
     }
 
+    static void reset_cache(void) {
+      GlobalAddress<int>::reset_cache();
+    }
+
     template< SyncMode S = SyncMode::Blocking, 
               CacheMode M = CacheMode::WriteBack,
               GlobalCompletionEvent * C = &impl::local_gce,
@@ -533,11 +539,15 @@ retry:
         // Broadcast invalidation messages according to the copyset one-by-one.
         for (int i = 0; i < info.copyset.size(); i++) {
           if (info.copyset[i] && Grappa::mycore() != i) {
+            delegate_inv++;
             call<S,C>((Core)i, [target] {
               bool valid;
               auto& mycache = GlobalAddress<T>::find_wi_cache(target, &valid, false);
               if (valid) {
                 mycache.valid = false;
+              }
+              else {
+                delegate_useless_inv++;
               }
             });
           }
@@ -574,11 +584,15 @@ retry:
       // Broadcast invalidation messages according to the copyset one-by-one.
       for (int i = 0; i < cpyset.size(); i++) {
         if (cpyset[i] && i != Grappa::mycore()) {
+          delegate_inv++;
           call<S,C>((Core)i, [target] {
             bool valid;
             auto& mycache = GlobalAddress<T>::find_wi_cache(target, &valid, false);
             if (valid) {
               mycache.valid = false;
+            }
+            else {
+              delegate_useless_inv++;
             }
           });
         }

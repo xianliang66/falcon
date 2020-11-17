@@ -55,6 +55,8 @@ GRAPPA_DEFINE_METRIC(SummarizingMetric<double>, delegate_read_latency, 0.0);
 GRAPPA_DEFINE_METRIC(SummarizingMetric<double>, delegate_write_latency, 0.0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_cache_hit, 0.0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_cache_miss, 0.0);
+GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_inv, 0.0);
+GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_useless_inv, 0.0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_cache_expired, 0.0);
 
 GRAPPA_DEFINE_METRIC(SimpleMetric<uint64_t>, delegate_ops, 0);

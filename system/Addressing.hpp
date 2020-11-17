@@ -300,6 +300,22 @@ public:
       }
     }
   }
+
+  static void reset_cache(void) {
+    free_cache();
+    if (FLAGS_cache_proto == GRAPPA_TARDIS) {
+      GlobalCacheData::tardis_owner_cache.clear();
+      GlobalCacheData::tardis_cache.clear();
+      GlobalCacheData::lru.clear();
+      Grappa::mypts() = 0;
+    }
+    else if (FLAGS_cache_proto == GRAPPA_WI) {
+      GlobalCacheData::wi_owner_cache.clear();
+      GlobalCacheData::wi_cache.clear();
+      GlobalCacheData::lru.clear();
+    }
+  }
+
 private:
 
   /// Storage for address
