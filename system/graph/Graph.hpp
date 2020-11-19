@@ -684,10 +684,6 @@ namespace Grappa {
 
     // compact
     on_all_cores([g]{
-  #ifdef SMALL_GRAPH
-      if (locale_mycore() == 0) locale_free(g->scratch);
-  #endif
-  
       VLOG(3) << "nadj_local = " << g->nadj_local;
   
       // allocate storage for local vertices' adjacencies
