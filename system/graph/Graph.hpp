@@ -67,7 +67,8 @@ namespace Grappa {
     struct VertexBase {
       bool valid; // vertices with no connections (in/out) are marked invalid TODO: eliminate these from the representation entirely
       VertexID * local_adj; // adjacencies that are local
-      uint32_t nadj;        // number of adjacencies
+      uint32_t nadj;        // number of adjacencies (in-edges)
+      uint32_t nout;        // number of adjacencies (out-edges)
       uint32_t local_sz;    // size of local allocation (regardless of how full it is)
       
       VertexBase(): valid(true), local_adj(nullptr), nadj(0), local_sz(0) {}
@@ -658,6 +659,11 @@ namespace Grappa {
         delegate::call<SyncMode::Async>(vaddr.core(), [vaddr,adj]{
           auto& v = *vaddr.pointer();
           v.local_adj[v.nadj++] = adj;
+        });
+        auto adjaddr = g->vs+adj;
+        delegate::call<SyncMode::Async>(adjaddr.core(), [adjaddr,adj]{
+          auto& v = *adjaddr.pointer();
+          v.nout++;
         });
       };
       // e.v0->e.v1

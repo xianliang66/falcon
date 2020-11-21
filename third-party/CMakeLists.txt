@@ -33,7 +33,7 @@ if(NOT Boost_FOUND)
   if(NOT "${CMAKE_THIRD_PARTY_TARFILE}" STREQUAL "")
     set(URL "${THIRD_PARTY_DOWNLOADS}/boost_1_54_0.tar.bz2")
   else()
-    set(URL "http://sourceforge.net/projects/boost/files/boost/1.54.0/boost_1_54_0.tar.bz2")
+    set(URL "https://sourceforge.net/projects/boost/files/boost/1.54.0/boost_1_54_0.tar.bz2/download?use_mirror=netcologne")
   endif()
 
   message("     boost: <building>")
@@ -48,7 +48,7 @@ if(NOT Boost_FOUND)
     INSTALL_DIR        ${THIRD_PARTY_ROOT}
     BUILD_IN_SOURCE 1
     CONFIGURE_COMMAND
-    ./bootstrap.sh 
+    ./bootstrap.sh
     --with-libraries=filesystem
     --with-libraries=system
     --with-libraries=test
@@ -119,10 +119,10 @@ endif()
 
 if(TRACING OR PROFILING)
 
-  # TODO: Add find_package() call so we don't build this if we don't have to!  
+  # TODO: Add find_package() call so we don't build this if we don't have to!
   find_library(THIRD_PARTY_GPERFTOOLS "profiler" "${THIRD_PARTY_ROOT}/lib")
   if( NOT THIRD_PARTY_GPERFTOOLS )
-  
+
     if(NOT "${CMAKE_THIRD_PARTY_TARFILE}" STREQUAL "")
         set(URL "${THIRD_PARTY_DOWNLOADS}/gperftools-2.1.tar.gz")
     else()
@@ -137,7 +137,7 @@ if(TRACING OR PROFILING)
       STAMP_DIR          ${EXTERN_STAMP_DIR}/gperftools
       BINARY_DIR         ${EXTERN_BUILD_DIR}/gperftools
       INSTALL_DIR        ${THIRD_PARTY_ROOT}
-      CONFIGURE_COMMAND  
+      CONFIGURE_COMMAND
         CC=${BASE_C_COMPILER} CXX=${BASE_CXX_COMPILER} CFLAGS=-g <SOURCE_DIR>/configure --prefix=<INSTALL_DIR> --enable-frame-pointers
       BUILD_COMMAND      make -j 4
       INSTALL_COMMAND    make install
@@ -146,7 +146,7 @@ if(TRACING OR PROFILING)
   else()
     message("     gperftools: ${THIRD_PARTY_GPERFTOOLS}")
   endif()
-  
+
 endif()
 
 # set(third-party-targets  third-party-gasnet third-party-gflags third-party-glog third-party-gperftools )
