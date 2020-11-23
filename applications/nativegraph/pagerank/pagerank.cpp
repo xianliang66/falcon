@@ -16,8 +16,6 @@ DEFINE_double( epsilon, 0.001f, "Acceptable error magnitude" );
 
 using namespace Grappa;
 
-int64_t nedge_traversed;
-
 GRAPPA_DEFINE_METRIC(SummarizingMetric<double>, pagerank_time, 0);
 GRAPPA_DEFINE_METRIC(SimpleMetric<double>, graph_create_time, 0);
 
@@ -113,6 +111,7 @@ int main(int argc, char* argv[]) {
       do_pagerank(g);
 
       double this_pagerank_time = walltime() - t;
+      pagerank_time += this_pagerank_time;
       LOG(INFO) << "(time=" << this_pagerank_time << ") " <<
         cache_proto_str[FLAGS_cache_proto] << " #E:" << tg.nedge << " #V:" << g->nv;
 
@@ -122,6 +121,8 @@ int main(int argc, char* argv[]) {
     }
     if (FLAGS_metrics) Metrics::merge_and_print();
     Metrics::merge_and_dump_to_file();
+
+    LOG(INFO) << pagerank_time;
 
     tg.destroy();
     g->destroy();

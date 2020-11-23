@@ -5,16 +5,12 @@ extern int64_t nedge_traversed;
 
 /* Vertex specific data */
 struct SSSPData {
-  uint8_t dist;
+  uint32_t dist;
   int32_t parent;
-  int32_t level;
-  bool seen;
 
   SSSPData& operator=(const SSSPData& other) {
     this->dist = other.dist;
     this->parent = other.parent;
-    this->level = other.level;
-    this->seen = other.seen;
     return *this;
   }
 
@@ -22,8 +18,6 @@ struct SSSPData {
     dist = std::numeric_limits<uint8_t>::max();
     
     parent = -1;
-    level = 0;
-    seen = false;
   }
 };
 
@@ -57,7 +51,7 @@ public:
 
   static inline int64_t verify(TupleGraph tg, GlobalAddress<G> g, int64_t root,
       bool directed) {
-    VerificatorBase<G>::verify(tg,g,root,directed);
+    //VerificatorBase<G>::verify(tg,g,root,directed);
 
     // SSSP distances verification
     forall(tg.edges, tg.nedge, [=](TupleGraph::Edge& e){
