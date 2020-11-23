@@ -7,7 +7,7 @@
 #define NO_TEST 3
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 13, "Log2 number of vertices.");
+DEFINE_int32(scale, 20, "Log2 number of vertices.");
 DEFINE_int32(edgefactor, 36, "Average number of edges per vertex.");
 DEFINE_int32(root, 1, "Vertex whose color is assigned as 1.");
 
