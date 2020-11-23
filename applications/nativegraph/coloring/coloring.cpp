@@ -7,7 +7,7 @@
 #define NO_TEST 3
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 13, "Log2 number of vertices.");
+DEFINE_int32(scale, 20, "Log2 number of vertices.");
 DEFINE_int32(edgefactor, 36, "Average number of edges per vertex.");
 DEFINE_int32(root, 1, "Vertex whose color is assigned as 1.");
 
@@ -94,9 +94,12 @@ void do_coloring(GlobalAddress<G> &g) {
             adj_colors.push_back(neighbour.data.color);
           });//forall_here
 
-          color_t mycolor = find_color(adj_colors, v.data.color);
-          if (mycolor != 0 && mycolor != v.data.color) {
-            update = true;
+          color_t mycolor = 0;
+          if (std::find(adj_colors.begin(), adj_colors.end(), v.data.color) != adj_colors.end()) {
+            mycolor = find_color(adj_colors, v.data.color);
+            if (mycolor != 0 && mycolor != v.data.color) {
+              update = true;
+            }
           }
           if (update) {
             nupdates++;
@@ -129,12 +132,12 @@ int main(int argc, char* argv[]) {
 
     // generate "NE" edge tuples, sampling vertices using the
     // Graph500 Kronecker generator to get a power-law graph
-    auto tg = TupleGraph::Kronecker(FLAGS_scale, NE, 111, 222);
+    //auto tg = TupleGraph::Kronecker(FLAGS_scale, NE, 111, 222);
 
     // Twitter has 42M vertices.
     // Coloring is 4B, tardis_metadata is 16B, while wi_metadata is 28B.
     // Tardis:WI=20:32
-    //auto tg = TupleGraph::Load("twitter_bintsv4.net", "bintsv4");
+    auto tg = TupleGraph::Load("twitter_bintsv4.net", "bintsv4");
 
     // create graph with incorporated Vertex
     GlobalAddress<G> g;
