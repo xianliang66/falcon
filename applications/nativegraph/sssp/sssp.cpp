@@ -50,9 +50,6 @@ void do_sssp(GlobalAddress<G> &g, int64_t root) {
       v->parent = root;
     });
 
-    // expose global completion flag to global address space
-    GlobalAddress<bool> complete_addr = make_global(&global_complete);
-
     int iter = 0;
     while (!global_complete) {
       double start_time = Grappa::walltime();
