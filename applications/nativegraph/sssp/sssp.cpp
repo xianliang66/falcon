@@ -7,9 +7,9 @@
 #define NO_TEST 5
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 9, "Log2 number of vertices.");
+DEFINE_int32(scale, 18, "Log2 number of vertices.");
 DEFINE_int32(edgefactor, 36, "Average number of edges per vertex.");
-DEFINE_int64(root, 12, "Average number of edges per vertex.");
+DEFINE_int64(root, 2, "Average number of edges per vertex.");
 
 using namespace Grappa;
 
@@ -120,12 +120,12 @@ int main(int argc, char* argv[]) {
 
     // generate "NE" edge tuples, sampling vertices using the
     // Graph500 Kronecker generator to get a power-law graph
-    //auto tg = TupleGraph::Kronecker(FLAGS_scale, NE, 111, 222);
+    auto tg = TupleGraph::Kronecker(FLAGS_scale, NE, 111, 222);
 
     // Twitter has 42M vertices.
     // SSSPData is 12B, tardis_metadata is 28B, while wi_metadata is 40B.
     // Tardis:WI=40:52
-    auto tg = TupleGraph::Load("twitter_bintsv4.net", "bintsv4");
+    //auto tg = TupleGraph::Load("twitter_bintsv4.net", "bintsv4");
 
     // create graph with incorporated Vertex
     GlobalAddress<G> g;

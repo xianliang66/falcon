@@ -14,7 +14,7 @@ DEFINE_bool(constant, false, "Whether to use the constant distribution");
 // 1.0f: commpletely skewed
 // 0.0f: constant
 DEFINE_double( alpha, 0.01f, "Alpha of zipf distribution." );
-DEFINE_double( read_propotion, 1.0f, "Read propotion" );
+DEFINE_double( read_propotion, 0.8f, "Read propotion" );
 
 /*
  * GlobalAddress::pointer() returns valid pointer for owned objects. For
