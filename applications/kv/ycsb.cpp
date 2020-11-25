@@ -24,6 +24,7 @@ enum db_op { READ, UPDATE, INSERT, REMOVE };
 
 static double highest_prob = 0.0;
 static double cul_prob[recordcount];
+static std::vector<uint32_t> shuffled_map;
 
 static db_op get_op(void) {
   double dice = rand() * 1.0 / RAND_MAX;
@@ -61,7 +62,7 @@ static int get_idx(void) {
       else
         right = idx;
     }
-    return (idx + rand() / RAND_MAX) % operationcount;
+    return shuffled_map[idx];
   }
 }
 
@@ -134,6 +135,12 @@ int main(int argc, char * argv[]) {
     init_db(mydb);
 
     on_all_cores([] {
+      srand(0);
+      for (uint32_t i = 0; i < recordcount; i++) {
+        shuffled_map.push_back(i);
+      }
+      std::random_shuffle(shuffled_map.begin(), shuffled_map.end());
+
       srand(Grappa::mycore());
       init_cul_prob();
     });
