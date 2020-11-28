@@ -41,6 +41,7 @@
 #include "DelegateBase.hpp"
 #include "GlobalCompletionEvent.hpp"
 #include "AsyncDelegate.hpp"
+#include "ParallelLoop.hpp"
 #include "Communicator.hpp"
 #include "TardisCache.hpp"
 #include <type_traits>
@@ -537,7 +538,7 @@ retry:
         info.locked = true;
 
         // Broadcast invalidation messages according to the copyset one-by-one.
-        for (int i = 0; i < info.copyset.size(); i++) {
+        forall_here<SyncMode::Blocking,nullptr> (0, info.copyset.size(), [&](int64_t i) {
           if (info.copyset[i] && Grappa::mycore() != i) {
             delegate_inv++;
             call<S,C>((Core)i, [target] {
@@ -551,7 +552,7 @@ retry:
               }
             });
           }
-        }
+        });
         info.copyset.reset();
 
         info.locked = false;
@@ -582,21 +583,23 @@ retry:
       auto& cpyset = r.object;
 
       // Broadcast invalidation messages according to the copyset one-by-one.
-      for (int i = 0; i < cpyset.size(); i++) {
-        if (cpyset[i] && i != Grappa::mycore()) {
-          delegate_inv++;
-          call<S,C>((Core)i, [target] {
-            bool valid;
-            auto& mycache = GlobalAddress<T>::find_wi_cache(target, &valid, false);
-            if (valid) {
-              mycache.valid = false;
-            }
-            else {
-              delegate_useless_inv++;
-            }
-          });
+      forall_here<SyncMode::Blocking,nullptr> (0, cpyset.size(), [&](int64_t i) {
+        for (int i = 0; i < cpyset.size(); i++) {
+          if (cpyset[i] && i != Grappa::mycore()) {
+            delegate_inv++;
+            call<S,C>((Core)i, [target] {
+              bool valid;
+              auto& mycache = GlobalAddress<T>::find_wi_cache(target, &valid, false);
+              if (valid) {
+                mycache.valid = false;
+              }
+              else {
+                delegate_useless_inv++;
+              }
+            });
+          }
         }
-      }
+      });
 
       Core writer = Grappa::mycore();
       // Unlock this object and update the copyset.
