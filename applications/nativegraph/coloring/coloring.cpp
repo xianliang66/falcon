@@ -9,7 +9,7 @@
 DEFINE_bool(metrics, false, "Dump metrics");
 DEFINE_int32(scale, 20, "Log2 number of vertices.");
 DEFINE_int32(edgefactor, 36, "Average number of edges per vertex.");
-DEFINE_int32(root, 1, "Vertex whose color is assigned as 1.");
+DEFINE_int32(root, 0, "Vertex whose color is assigned as 1.");
 
 using namespace Grappa;
 
@@ -125,7 +125,7 @@ int main(int argc, char* argv[]) {
   Grappa::init(&argc, &argv);
   Grappa::run([]{
     int64_t NE = (1L << FLAGS_scale) * FLAGS_edgefactor;
-    bool directed = true;
+    bool directed = false;
     double t;
     
     t = walltime();
@@ -137,7 +137,7 @@ int main(int argc, char* argv[]) {
     // Twitter has 42M vertices.
     // Coloring is 4B, tardis_metadata is 16B, while wi_metadata is 28B.
     // Tardis:WI=20:32
-    auto tg = TupleGraph::Load("twitter_bintsv4.net", "bintsv4");
+    auto tg = TupleGraph::Load("com-lj.ungraph.bintsv4", "bintsv4");
 
     // create graph with incorporated Vertex
     GlobalAddress<G> g;

@@ -78,7 +78,7 @@ int main(int argc, char* argv[]) {
   Grappa::init(&argc, &argv);
   Grappa::run([]{
     int64_t NE = (1L << FLAGS_scale) * FLAGS_edgefactor;
-    bool directed = true;
+    bool directed = false;
     double t;
     
     t = walltime();
@@ -90,7 +90,7 @@ int main(int argc, char* argv[]) {
     // Twitter has 42M vertices.
     // PagerankData is 8B, tardis_metadata is 20B, while wi_metadata is 32B.
     // Tardis:WI=20:32
-    auto tg = TupleGraph::Load("twitter_bintsv4.net", "bintsv4");
+    auto tg = TupleGraph::Load("com-lj.ungraph.bintsv4", "bintsv4");
 
     // create graph with incorporated Vertex
     GlobalAddress<G> g;
