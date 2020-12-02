@@ -361,9 +361,10 @@ namespace Grappa {
       if (valid) {
         auto r = call<S,C>(target.core(), [target, pts, wts]() {
           auto& owner_ts = GlobalAddress<T>::find_tardis_owner_info(target);
+          owner_ts.lease = std::min<timestamp_t>(owner_ts.lease + 1, FLAGS_lease);
           if (owner_ts.wts == wts) {
             owner_ts.rts = std::max<timestamp_t>(std::max<timestamp_t>(
-                  owner_ts.rts, owner_ts.wts + FLAGS_lease), (pts + FLAGS_lease));
+                  owner_ts.rts, owner_ts.wts + owner_ts.lease), (pts + owner_ts.lease));
             return owner_ts.rts;
           }
           else {
@@ -381,8 +382,9 @@ namespace Grappa {
       // Ask for the latest object.
       auto r = call<S,C>(target.core(), [target, pts]() {
         auto& owner_ts = GlobalAddress<T>::find_tardis_owner_info(target);
+        owner_ts.lease = std::min<timestamp_t>(owner_ts.lease + 1, FLAGS_lease);
         owner_ts.rts = std::max<timestamp_t>(std::max<timestamp_t>(
-              owner_ts.rts, owner_ts.wts + FLAGS_lease), (pts + FLAGS_lease));
+              owner_ts.rts, owner_ts.wts + owner_ts.lease), (pts + owner_ts.lease));
         return impl::rpc_read_result<T>(*target.pointer(), owner_ts);
       });
       mycache.assign(&r.r);
@@ -499,6 +501,7 @@ retry:
       timestamp_t pts = Grappa::mypts();
       if (target.is_owner()) {
         auto& owner_ts = GlobalAddress<T>::find_tardis_owner_info(target);
+        owner_ts.lease = 1;
         timestamp_t ts = std::max<timestamp_t>(Grappa::mypts(), owner_ts.rts + 1);
         Grappa::mypts() = owner_ts.rts = owner_ts.wts = ts;
         /// Update owner storage.
@@ -512,6 +515,7 @@ retry:
       // No need to broadcast.
       auto r = call<S,C>(target.core(), [target, value] {
         auto& owner_ts = GlobalAddress<T>::find_tardis_owner_info(target);
+        owner_ts.lease = 1;
         timestamp_t ts = std::max<timestamp_t>(Grappa::mypts(), owner_ts.rts + 1);
         Grappa::mypts() = owner_ts.wts = owner_ts.rts = ts;
         *target.pointer() = value;

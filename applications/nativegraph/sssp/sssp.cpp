@@ -7,9 +7,9 @@
 #define NO_TEST 3
 /* Options */
 DEFINE_bool(metrics, false, "Dump metrics");
-DEFINE_int32(scale, 18, "Log2 number of vertices.");
-DEFINE_int32(edgefactor, 36, "Average number of edges per vertex.");
-DEFINE_int64(root, 0, "Root vertex of SSSP.");
+DEFINE_int32(scale, 23, "Log2 number of vertices.");
+DEFINE_int32(edgefactor, 24, "Average number of edges per vertex.");
+DEFINE_int64(root, 1, "Root vertex of SSSP.");
 
 using namespace Grappa;
 
@@ -101,7 +101,7 @@ int main(int argc, char* argv[]) {
   Grappa::run([]{
     int64_t NE = (1L << FLAGS_scale) * FLAGS_edgefactor;
     bool verified = true;
-    bool directed = false;
+    bool directed = true;
     double t;
     
     t = walltime();
@@ -113,7 +113,7 @@ int main(int argc, char* argv[]) {
     // Twitter has 42M vertices.
     // SSSPData is 8B, tardis_metadata is 12B, while wi_metadata is 24B.
     // Tardis:WI=20:32
-    auto tg = TupleGraph::Load("com-lj.ungraph.bintsv4", "bintsv4");
+    //auto tg = TupleGraph::Load("com-orkut.ungraph.bintsv4", "bintsv4");
 
     // create graph with incorporated Vertex
     GlobalAddress<G> g;

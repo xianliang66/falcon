@@ -5,7 +5,7 @@ using namespace Grappa;
 using namespace std;
 
 #define RECORD_LENGTH 64
-#define SLOT_NUMBER 2500000
+#define SLOT_NUMBER 1000000 
 #define open_addr_limit max(15, SLOT_NUMBER / 1000)
 
 #include <bitset>

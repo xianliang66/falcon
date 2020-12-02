@@ -36,7 +36,7 @@ static db_op get_op(void) {
   }
 }
 
-static int get_idx(void) {
+static int get_idx(db_op op) {
   double dice = rand() * 1.0 / RAND_MAX;
 
   if (FLAGS_constant) {
@@ -62,7 +62,12 @@ static int get_idx(void) {
       else
         right = idx;
     }
-    return shuffled_map[idx];
+    if (op == READ) {
+      return shuffled_map[idx] % 2 == 0 ? shuffled_map[idx] : (shuffled_map[idx] + 1) % recordcount;
+    }
+    else {
+      return shuffled_map[idx] % 2 != 0 ? shuffled_map[idx] : (shuffled_map[idx] + 1) % recordcount;
+    }
   }
 }
 
@@ -102,7 +107,7 @@ static void execute_operation(db db) {
 
   switch (op) {
     case READ: {
-      int idx = get_idx();
+      int idx = get_idx(op);
       db.generate_key(idx, key);
       result = db.read(key, value, idx);
       if (!result) {
@@ -113,7 +118,7 @@ static void execute_operation(db db) {
       break;
     }
     case UPDATE: {
-      int idx = get_idx();
+      int idx = get_idx(op);
       db.generate_key(idx, key);
       result = db.update(key, value, idx);
       if (!result) {

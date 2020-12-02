@@ -47,8 +47,9 @@ template <typename T>
 struct lock_obj { T object; bool locked; };
 
 struct tardis_owner_cache_info {
-  tardis_owner_cache_info() : rts(0), wts(0) {}
+  tardis_owner_cache_info() : rts(0), wts(0), lease(1) {}
   timestamp_t rts, wts;
+  unsigned char lease;
 };
 
 struct tardis_cache_info : cache_info_base {
