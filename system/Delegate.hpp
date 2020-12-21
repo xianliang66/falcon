@@ -543,7 +543,6 @@ retry:
 
         // Broadcast invalidation messages according to the copyset one-by-one.
         forall_here<SyncMode::Blocking,nullptr> (0, info.copyset.size(), [&](int64_t i) {
-          if (info.copyset[i] && Grappa::mycore() != i) {
             delegate_inv++;
             call<S,C>((Core)i, [target] {
               bool valid;
@@ -555,7 +554,6 @@ retry:
                 delegate_useless_inv++;
               }
             });
-          }
         });
         info.copyset.reset();
 
@@ -588,7 +586,6 @@ retry:
 
       // Broadcast invalidation messages according to the copyset one-by-one.
       forall_here<SyncMode::Blocking,nullptr> (0, cpyset.size(), [&](int64_t i) {
-        for (int i = 0; i < cpyset.size(); i++) {
           if (cpyset[i] && i != Grappa::mycore()) {
             delegate_inv++;
             call<S,C>((Core)i, [target] {
@@ -602,7 +599,6 @@ retry:
               }
             });
           }
-        }
       });
 
       Core writer = Grappa::mycore();
